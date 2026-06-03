@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% set active_nav = "metrics" %}
+{% block title %}Metrics — LLM Gateway{% endblock %}
+{% block content %}
+<div class="metrics-head">
+  <h1>Gateway metrics</h1>
+  <div class="range-picker">
+    {% for choice in range_choices %}
+    <a href="/dashboard/metrics?range={{ choice }}"
+       class="range-chip {% if choice == range %}active{% endif %}">{{ choice }}</a>
+    {% endfor %}
+  </div>
+</div>
+<p class="meta">
+  {{ range_from.strftime("%Y-%m-%d %H:%M") }} → {{ range_to.strftime("%Y-%m-%d %H:%M") }} UTC ·
+  bucketed by {{ granularity }}
+</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Requests</div>
+    <div class="card-value">{{ "{:,}".format(totals.requests) }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Total tokens</div>
+    <div class="card-value">{{ "{:,}".format(totals.total_tokens) }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Cost</div>
+    <div class="card-value">${{ "%.4f"|format(totals.cost) }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Error rate</div>
+    <div class="card-value {% if totals.error_rate >= 0.1 %}over{% elif totals.error_rate > 0 %}warn{% endif %}">
+      {{ "%.1f"|format(totals.error_rate * 100) }}%
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-label">Avg latency</div>
+    <div class="card-value">{{ "%.0f"|format(totals.avg_latency_ms) }} ms</div>
+  </div>
+</div>
+
+<h2>Requests &amp; cost over time</h2>
+{% if not chart.bars %}
+  <p class="empty">No requests in this window.</p>
+{% else %}
+<div class="chart-wrap">
+  <div class="chart-legend">
+    <span class="legend-item"><span class="swatch swatch-req"></span>Requests
+      <span class="muted">(peak {{ "{:,}".format(chart.max_requests) }})</span></span>
+    <span class="legend-item"><span class="swatch swatch-cost"></span>Cost
+      <span class="muted">(peak ${{ "%.4f"|format(chart.max_cost) }})</span></span>
+  </div>
+  <svg class="spark" viewBox="0 0 {{ chart.width }} {{ chart.height }}"
+       preserveAspectRatio="none" role="img"
+       aria-label="Requests and cost per {{ granularity }} bucket">
+    {# Baseline #}
+    <line x1="0" y1="{{ chart.height - 8 }}" x2="{{ chart.width }}" y2="{{ chart.height - 8 }}"
+          class="axis-line" />
+    {% for bar in chart.bars %}
+    {# Requests bar (wider, behind) #}
+    <rect x="{{ bar.x }}" y="{{ bar.req_y }}" width="{{ bar.w }}" height="{{ bar.req_h }}"
+          class="bar-req" rx="1.5">
+      <title>{{ bar.label }} · {{ "{:,}".format(bar.requests) }} req · ${{ "%.4f"|format(bar.cost) }}</title>
+    </rect>
+    {# Cost bar (narrower, in front, offset) #}
+    <rect x="{{ bar.x + bar.w * 0.30 }}" y="{{ bar.cost_y }}" width="{{ bar.w * 0.40 }}"
+          height="{{ bar.cost_h }}" class="bar-cost {% if bar.has_error %}bar-error{% endif %}" rx="1.5">
+      <title>{{ bar.label }} · ${{ "%.4f"|format(bar.cost) }} · {{ "{:,}".format(bar.requests) }} req</title>
+    </rect>
+    {% endfor %}
+  </svg>
+  <div class="chart-axis">
+    {% for lbl in chart.labels %}
+    <span class="axis-label" style="left: {{ (lbl.x / chart.width * 100) }}%">{{ lbl.text }}</span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<h2>By provider</h2>
+{{ breakdown_table(by_provider, "Provider") }}
+
+<h2>By model</h2>
+{{ breakdown_table(by_model, "Model") }}
+{% endblock %}
+
+{% macro breakdown_table(rows, label) %}
+{% if not rows %}
+  <p class="empty">No data for this window.</p>
+{% else %}
+<table class="breakdown">
+  <thead>
+    <tr>
+      <th>{{ label }}</th>
+      <th class="num">Requests</th>
+      <th class="num">Tokens</th>
+      <th class="num">Cost</th>
+      <th class="cost-bar-col">Cost share</th>
+      <th class="num">Avg latency</th>
+      <th class="num">Errors</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td><code>{{ row.key }}</code></td>
+      <td class="num">{{ "{:,}".format(row.requests) }}</td>
+      <td class="num">{{ "{:,}".format(row.total_tokens) }}</td>
+      <td class="num">${{ "%.4f"|format(row.cost) }}</td>
+      <td class="cost-bar-col">
+        <span class="cost-bar"><span class="cost-bar-fill" style="width: {{ (row.cost_frac * 100) }}%"></span></span>
+      </td>
+      <td class="num">{{ "%.0f"|format(row.avg_latency_ms) }} ms</td>
+      <td class="num {% if row.error_rate >= 0.1 %}over{% elif row.error_rate > 0 %}warn{% endif %}">
+        {{ "%.1f"|format(row.error_rate * 100) }}%
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endmacro %}

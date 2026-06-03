@@ -340,25 +340,149 @@ def test_me_and_health():
         assert c.health()["status"] == "ok"
 
 
-def test_models_and_metrics_shapes():
+MODELS_OK = {
+    "object": "list",
+    "data": [
+        {
+            "id": "gpt-4o-mini",
+            "object": "model",
+            "created": 0,
+            "owned_by": "openai",
+            "provider": "openai",
+            "pricing": {"input_per_1k_usd": 0.15, "output_per_1k_usd": 0.6},
+        },
+        {
+            "id": "mystery-model",
+            "object": "model",
+            "created": 0,
+            "owned_by": "unknown",
+            "provider": "unknown",
+            "pricing": None,  # unpriced models report pricing=None
+        },
+    ],
+}
+
+METRICS_OK = {
+    "scope": "project",
+    "scope_id": "22222222-2222-2222-2222-222222222222",
+    "range_from": "2026-06-03T00:00:00+00:00",
+    "range_to": "2026-06-04T00:00:00+00:00",
+    "group_by": "status",
+    "granularity": "hour",
+    "totals": {
+        "requests": 7,
+        "prompt_tokens": 30,
+        "completion_tokens": 50,
+        "total_tokens": 80,
+        "cost_usd": 1.25,
+        "error_rate": 0.0,
+        "cache_hit_rate": 0.5,
+        "avg_latency_ms": 120.0,
+        "p50_latency_ms": 100.0,
+        "p95_latency_ms": 200.0,
+        "p99_latency_ms": 250.0,
+    },
+    "breakdown": [
+        {
+            "key": "ok",
+            "requests": 7,
+            "total_tokens": 80,
+            "cost_usd": 1.25,
+            "avg_latency_ms": 120.0,
+            "error_rate": 0.0,
+        }
+    ],
+    "timeseries": [
+        {
+            "bucket": "2026-06-03T12:00:00+00:00",
+            "requests": 7,
+            "total_tokens": 80,
+            "cost_usd": 1.25,
+            "error_rate": 0.0,
+        }
+    ],
+    "extra_unknown_field": "ignored",  # forward-compat
+}
+
+
+def test_models_shape():
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/v1/models":
-            return httpx.Response(200, json={"data": [
-                {"id": "gpt-4o-mini", "provider": "openai", "input_per_1k": 0.15},
-            ]})
-        if request.url.path == "/v1/metrics":
-            return httpx.Response(200, json={
-                "window": request.url.params.get("window"),
-                "spend_usd": 1.25, "request_count": 7,
-                "by_model": {"gpt-4o-mini": 1.25}, "by_status": {"ok": 7},
-            })
-        return httpx.Response(404, json={"detail": "nope"})
+        assert request.url.path == "/v1/models"
+        return httpx.Response(200, json=MODELS_OK)
 
     with make_client(handler) as c:
         models = c.models()
-        assert models[0].id == "gpt-4o-mini" and models[0].input_per_1k == 0.15
-        m = c.metrics(window="7d")
-        assert m.window == "7d" and m.request_count == 7 and m.by_status["ok"] == 7
+    assert [m.id for m in models] == ["gpt-4o-mini", "mystery-model"]
+    first = models[0]
+    assert first.owned_by == "openai" and first.provider == "openai"
+    assert first.object == "model"
+    assert first.pricing is not None
+    assert first.pricing.input_per_1k_usd == 0.15
+    assert first.pricing.output_per_1k_usd == 0.6
+    assert models[1].pricing is None  # unpriced model
+
+
+def test_metrics_uses_range_param_and_rich_shape():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/metrics"
+        seen["range"] = request.url.params.get("range")
+        seen["window"] = request.url.params.get("window")  # must be absent now
+        return httpx.Response(200, json=METRICS_OK)
+
+    with make_client(handler) as c:
+        m = c.metrics(range="7d")
+
+    assert seen["range"] == "7d"  # query param is 'range', not 'window'
+    assert seen["window"] is None
+    assert m.scope == "project"
+    assert m.scope_id == "22222222-2222-2222-2222-222222222222"
+    assert m.group_by == "status"
+    assert m.granularity == "hour"
+    assert m.totals.requests == 7
+    assert m.totals.total_tokens == 80
+    assert m.totals.cost_usd == pytest.approx(1.25)
+    assert m.totals.cache_hit_rate == pytest.approx(0.5)
+    assert m.totals.p95_latency_ms == 200.0
+    assert m.breakdown[0].key == "ok" and m.breakdown[0].requests == 7
+    assert m.timeseries[0].requests == 7
+    assert m.timeseries[0].bucket.year == 2026
+
+
+def test_metrics_defaults_to_24h():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params.get("range") == "24h"
+        return httpx.Response(200, json=METRICS_OK)
+
+    with make_client(handler) as c:
+        c.metrics()
+
+
+def test_create_api_key_posts_to_keys_api():
+    payload = {
+        "id": "33333333-3333-3333-3333-333333333333",
+        "name": "ci",
+        "key_prefix": "llmg_abcd",
+        "created_at": "2026-06-04T00:00:00+00:00",
+        "last_used_at": None,
+        "revoked_at": None,
+        "api_key": "llmg_freshsecret",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/keys/api"  # NOT /v1/keys/create
+        assert request.method == "POST"
+        assert json.loads(request.content) == {"name": "ci"}
+        return httpx.Response(201, json=payload)
+
+    with make_client(handler) as c:
+        key = c.create_api_key(name="ci")
+    assert key.api_key == "llmg_freshsecret"
+    assert key.name == "ci"
+    assert key.key_prefix == "llmg_abcd"
+    assert key.id == "33333333-3333-3333-3333-333333333333"
+    assert key.revoked_at is None
 
 
 # --------------------------------------------------------------------------
@@ -407,3 +531,36 @@ async def test_async_error_mapping():
     async with make_async_client(handler, retries=0) as c:
         with pytest.raises(BudgetExceededError):
             await c.chat(model="m", messages="hi")
+
+
+async def test_async_metrics_and_create_api_key_shapes():
+    seen: dict = {}
+    key_payload = {
+        "id": "44444444-4444-4444-4444-444444444444",
+        "name": "svc",
+        "key_prefix": "llmg_wxyz",
+        "created_at": "2026-06-04T00:00:00+00:00",
+        "last_used_at": None,
+        "revoked_at": None,
+        "api_key": "llmg_asyncsecret",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/metrics":
+            seen["range"] = request.url.params.get("range")
+            return httpx.Response(200, json=METRICS_OK)
+        if request.url.path == "/v1/keys/api":
+            assert request.method == "POST"
+            return httpx.Response(201, json=key_payload)
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json=MODELS_OK)
+        return httpx.Response(404, json={"detail": "nope"})
+
+    async with make_async_client(handler) as c:
+        m = await c.metrics(range="30d")
+        assert seen["range"] == "30d"
+        assert m.totals.total_tokens == 80
+        models = await c.models()
+        assert models[0].pricing.output_per_1k_usd == 0.6
+        key = await c.create_api_key(name="svc")
+        assert key.api_key == "llmg_asyncsecret" and key.key_prefix == "llmg_wxyz"

@@ -8,7 +8,13 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">LLM Gateway</a>
+    <div class="topbar-left">
+      <a class="brand" href="/">LLM Gateway</a>
+      <nav class="nav">
+        <a href="/" class="{% if active_nav == 'overview' %}active{% endif %}">Overview</a>
+        <a href="/dashboard/metrics" class="{% if active_nav == 'metrics' %}active{% endif %}">Metrics</a>
+      </nav>
+    </div>
     <span class="generated">Generated {{ generated_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}</span>
   </header>
   <main class="container">

@@ -1,10 +1,15 @@
 """Standalone end-to-end smoke test against the live docker Postgres+Redis.
 
 Reads .env (real docker DSNs), monkeypatches the OpenAI adapter so no network
-is needed, and drives the full ASGI app. Run: python _smoke_e2e.py
+is needed, and drives the full ASGI app. Run: python scripts/smoke_e2e.py
 """
 
 import asyncio
+import sys
+from pathlib import Path
+
+# Allow running directly: ensure the repo root (containing 'app') is importable.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 

@@ -1,8 +1,9 @@
 """llm-gateway-sdk — Python client for the LLM Gateway.
 
-Sync and async, streaming-aware, fully typed. Talks the gateway's HTTP surface
-(``/v1/chat``, ``/v1/signup``, ``/v1/keys``, ``/v1/me``, ``/health`` and the
-forthcoming ``/v1/models`` + ``/v1/metrics``).
+Sync and async, streaming-aware, fully typed. Talks the gateway's HTTP surface:
+``/v1/chat`` (text/plain streaming), ``/v1/chat/completions`` (OpenAI-compatible),
+``/v1/models``, ``/v1/metrics``, ``/v1/keys`` (BYOK) + ``/v1/keys/api`` (gateway
+key mgmt), ``/v1/signup``, ``/v1/me`` and ``/health``.
 
 Quick start::
 
@@ -29,12 +30,17 @@ from .exceptions import (
     classify,
 )
 from .models import (
+    ApiKeyCreated,
     ChatRequest,
     ChatResponse,
     Message,
     MeResponse,
+    MetricsBreakdown,
     MetricsResponse,
+    MetricsTimePoint,
+    MetricsTotals,
     ModelInfo,
+    ModelPricing,
     SignupResponse,
     StreamChunk,
     Usage,
@@ -54,8 +60,13 @@ __all__ = [
     "StreamChunk",
     "SignupResponse",
     "MeResponse",
+    "ApiKeyCreated",
     "ModelInfo",
+    "ModelPricing",
     "MetricsResponse",
+    "MetricsTotals",
+    "MetricsBreakdown",
+    "MetricsTimePoint",
     # exceptions
     "GatewayError",
     "APIError",

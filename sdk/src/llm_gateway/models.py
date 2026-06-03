@@ -11,6 +11,7 @@ serialises them to JSON strings, so the SDK types them as ``str``.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -100,35 +101,112 @@ class MeResponse(BaseModel):
     configured_providers: list[str] = Field(default_factory=list)
 
 
-class ModelInfo(BaseModel):
-    """An entry from ``GET /v1/models`` (gateway task #6).
+class ApiKeyCreated(BaseModel):
+    """Result of ``POST /v1/keys/api`` — a newly minted gateway API key.
 
-    Available at runtime only once the gateway ships the ``/v1/models``
-    endpoint; the SDK is designed against the agreed shape.
+    The plaintext ``api_key`` is returned only here and is never recoverable
+    afterwards; the gateway stores only its hash.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     id: str
-    provider: str = ""
-    input_per_1k: Optional[float] = None
-    output_per_1k: Optional[float] = None
+    name: str
+    key_prefix: str
+    created_at: datetime
+    last_used_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+    api_key: str
 
 
-class MetricsResponse(BaseModel):
-    """Result of ``GET /v1/metrics`` (gateway task #5).
+class ModelPricing(BaseModel):
+    """Per-1k-token USD pricing for a model card."""
 
-    Available at runtime only once the gateway ships the ``/v1/metrics``
-    endpoint; the SDK is designed against the agreed shape.
+    model_config = ConfigDict(extra="ignore")
+
+    input_per_1k_usd: float = 0.0
+    output_per_1k_usd: float = 0.0
+
+
+class ModelInfo(BaseModel):
+    """An entry from ``GET /v1/models`` — an OpenAI-style model card.
+
+    The server returns ``{"object": "list", "data": [card, ...]}`` where each
+    card is ``{id, object, created, owned_by, provider, pricing}``. ``pricing``
+    is ``None`` for models without a known price.
     """
 
     model_config = ConfigDict(extra="ignore")
 
-    window: str = "today"
-    spend_usd: float = 0.0
-    request_count: int = 0
-    by_model: dict[str, float] = Field(default_factory=dict)
-    by_status: dict[str, int] = Field(default_factory=dict)
+    id: str
+    object: str = "model"
+    created: int = 0
+    owned_by: str = ""
+    provider: str = ""
+    pricing: Optional[ModelPricing] = None
+
+
+class MetricsTotals(BaseModel):
+    """Window-wide aggregate totals from ``GET /v1/metrics``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    requests: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+    error_rate: float = 0.0
+    cache_hit_rate: float = 0.0
+    avg_latency_ms: float = 0.0
+    p50_latency_ms: Optional[float] = None
+    p95_latency_ms: Optional[float] = None
+    p99_latency_ms: Optional[float] = None
+
+
+class MetricsBreakdown(BaseModel):
+    """One grouped row (by provider/model/user/status)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    key: str
+    requests: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+    avg_latency_ms: float = 0.0
+    error_rate: float = 0.0
+
+
+class MetricsTimePoint(BaseModel):
+    """One time-bucketed point in the metrics series."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    bucket: datetime
+    requests: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+    error_rate: float = 0.0
+
+
+class MetricsResponse(BaseModel):
+    """Result of ``GET /v1/metrics`` — the rich project-scoped analytics payload.
+
+    Carries window-wide ``totals`` (with latency percentiles + cache-hit rate),
+    an optional grouped ``breakdown``, and a bucketed ``timeseries``.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    scope: str
+    scope_id: str
+    range_from: datetime
+    range_to: datetime
+    group_by: Optional[str] = None
+    granularity: str
+    totals: MetricsTotals = Field(default_factory=MetricsTotals)
+    breakdown: list[MetricsBreakdown] = Field(default_factory=list)
+    timeseries: list[MetricsTimePoint] = Field(default_factory=list)
 
 
 # --- coercion helpers -------------------------------------------------------

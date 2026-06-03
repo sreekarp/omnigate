@@ -138,19 +138,44 @@ oai.chat.completions.create(
 This SDK also offers a thin `completions(...)` helper returning the raw
 OpenAI-shaped dict.
 
+## Models & metrics
+
+```python
+# GET /v1/models -> list[ModelInfo] (OpenAI-style cards; pricing may be None)
+for m in client.models():
+    if m.pricing:
+        print(m.id, m.owned_by, m.provider, m.pricing.input_per_1k_usd)
+    else:
+        print(m.id, m.owned_by, "(unpriced)")
+
+# GET /v1/metrics -> MetricsResponse. range is one of 1h | 24h | 7d | 30d
+# (default "24h"). The response carries totals, an optional grouped breakdown,
+# and a bucketed timeseries.
+mx = client.metrics(range="7d")
+print(mx.totals.requests, mx.totals.cost_usd, mx.totals.cache_hit_rate)
+print(mx.totals.p95_latency_ms)
+for row in mx.breakdown:          # grouped by provider/model/user/status
+    print(row.key, row.requests, row.cost_usd)
+for pt in mx.timeseries:          # bucketed points
+    print(pt.bucket, pt.requests)
+```
+
+## Gateway key management
+
+`POST /v1/keys/api` mints an additional named gateway key; the plaintext
+`api_key` is returned **once** and never recoverable afterwards.
+
+```python
+key = client.create_api_key(name="ci")   # POST /v1/keys/api -> ApiKeyCreated
+print(key.api_key, key.key_prefix, key.id)  # persist key.api_key now
+```
+
 ## Other methods
 
 ```python
-client.me()                       # GET /v1/me  -> MeResponse
-client.health()                   # GET /health -> dict
-client.models()                   # GET /v1/models  -> list[ModelInfo]   (gateway task #6)
-client.metrics(window="7d")       # GET /v1/metrics -> MetricsResponse    (gateway task #5)
-client.create_api_key(name="ci")  # POST /v1/keys/create                  (gateway task #6)
+client.me()      # GET /v1/me  -> MeResponse
+client.health()  # GET /health -> dict
 ```
-
-> `models()`, `metrics()`, and `create_api_key()` target endpoints that may not
-> yet be deployed on every gateway version. They are validated against the
-> agreed shapes; the SDK's tests exercise them with mock transports.
 
 ## License
 

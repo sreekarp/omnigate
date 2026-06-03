@@ -16,8 +16,9 @@ import httpx
 from . import _transport as T
 from ._retry import RetryConfig, compute_delay, parse_retry_after, should_retry
 from ._version import __version__
-from .exceptions import APIError, ConnectionError as GatewayConnectionError
+from .exceptions import ConnectionError as GatewayConnectionError
 from .models import (
+    ApiKeyCreated,
     ChatResponse,
     MeResponse,
     MetricsResponse,
@@ -277,12 +278,18 @@ class Client:
         items = data.get("data", data) if isinstance(data, dict) else data
         return [ModelInfo.model_validate(m) for m in (items or [])]
 
-    def metrics(self, *, window: str = "today") -> MetricsResponse:
-        """Fetch usage metrics (``GET /v1/metrics``; requires gateway task #5)."""
+    def metrics(self, *, range: str = "24h") -> MetricsResponse:
+        """Fetch project usage metrics (``GET /v1/metrics``).
+
+        ``range`` is one of ``1h|24h|7d|30d`` (default ``24h``); the gateway also
+        accepts explicit ``from``/``to`` ISO timestamps, but the SDK helper
+        exposes the ``range`` shorthand. Returns the rich :class:`MetricsResponse`
+        (``totals`` / ``breakdown`` / ``timeseries``).
+        """
         url = T.build_url(self.base_url, "/v1/metrics")
         headers = self._headers(None)
         try:
-            resp = self._client.get(url, params={"window": window}, headers=headers)
+            resp = self._client.get(url, params={"range": range}, headers=headers)
         except (httpx.TransportError, httpx.TimeoutException) as exc:
             raise GatewayConnectionError(
                 f"Could not reach gateway at {self.base_url}: {exc}"
@@ -315,14 +322,16 @@ class Client:
         if resp.status_code >= 400:
             raise T.error_for_response(resp)
 
-    def create_api_key(self, *, name: str) -> dict[str, Any]:
-        """Mint an additional gateway api key (``POST /v1/keys/create``).
+    def create_api_key(self, *, name: str) -> ApiKeyCreated:
+        """Mint an additional gateway api key (``POST /v1/keys/api`` -> 201).
 
-        Returns the raw JSON (including the one-time plaintext key) so the
-        caller can persist it. Requires gateway task #6 to be live.
+        Returns an :class:`ApiKeyCreated` carrying the one-time plaintext
+        ``api_key`` (plus ``id``/``key_prefix``/timestamps); the plaintext is
+        never recoverable afterwards, so persist it immediately.
         """
-        resp = self._request("POST", "/v1/keys/create", json={"name": name})
-        return T.handle_json_response(resp)
+        resp = self._request("POST", "/v1/keys/api", json={"name": name})
+        data = T.handle_json_response(resp)
+        return ApiKeyCreated.model_validate(data)
 
     def me(self) -> MeResponse:
         """Account info for the current key (``GET /v1/me``)."""

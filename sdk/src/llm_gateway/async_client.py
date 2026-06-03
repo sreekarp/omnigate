@@ -19,6 +19,7 @@ from ._retry import RetryConfig, compute_delay, parse_retry_after, should_retry
 from ._version import __version__
 from .exceptions import ConnectionError as GatewayConnectionError, ProviderError
 from .models import (
+    ApiKeyCreated,
     ChatResponse,
     MeResponse,
     MetricsResponse,
@@ -267,9 +268,13 @@ class AsyncClient:
         items = data.get("data", data) if isinstance(data, dict) else data
         return [ModelInfo.model_validate(m) for m in (items or [])]
 
-    async def metrics(self, *, window: str = "today") -> MetricsResponse:
-        """Fetch usage metrics (``GET /v1/metrics``; requires gateway task #5)."""
-        resp = await self._request("GET", "/v1/metrics", params={"window": window})
+    async def metrics(self, *, range: str = "24h") -> MetricsResponse:
+        """Fetch project usage metrics (``GET /v1/metrics``).
+
+        ``range`` is one of ``1h|24h|7d|30d`` (default ``24h``). Returns the rich
+        :class:`MetricsResponse` (``totals`` / ``breakdown`` / ``timeseries``).
+        """
+        resp = await self._request("GET", "/v1/metrics", params={"range": range})
         data = T.handle_json_response(resp)
         return MetricsResponse.model_validate(data)
 
@@ -297,10 +302,15 @@ class AsyncClient:
         if resp.status_code >= 400:
             raise T.error_for_response(resp)
 
-    async def create_api_key(self, *, name: str) -> dict[str, Any]:
-        """Mint an additional gateway api key (``POST /v1/keys/create``)."""
-        resp = await self._request("POST", "/v1/keys/create", json={"name": name})
-        return T.handle_json_response(resp)
+    async def create_api_key(self, *, name: str) -> ApiKeyCreated:
+        """Mint an additional gateway api key (``POST /v1/keys/api`` -> 201).
+
+        Returns an :class:`ApiKeyCreated` carrying the one-time plaintext
+        ``api_key``; persist it immediately as it is never recoverable.
+        """
+        resp = await self._request("POST", "/v1/keys/api", json={"name": name})
+        data = T.handle_json_response(resp)
+        return ApiKeyCreated.model_validate(data)
 
     async def me(self) -> MeResponse:
         """Account info for the current key (``GET /v1/me``)."""
