@@ -102,6 +102,34 @@ async def test_stream_accumulates_usage_and_one_terminal_chunk(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stream_emits_terminal_usage_without_message_stop(monkeypatch):
+    # Regression: a truncated/proxied stream that ends WITHOUT a message_stop
+    # event must still emit the accumulated usage (else the request bills $0).
+    events = [
+        {"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
+        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hi"}},
+        {
+            "type": "message_delta",
+            "usage": {"output_tokens": 4},
+            "delta": {"stop_reason": "max_tokens"},
+        },
+        # no message_stop
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_sse(events))
+
+    _install_transport(monkeypatch, httpx.MockTransport(handler))
+    chunks = [c async for c in AnthropicProvider().stream(_request(), "ak-1")]
+    usage_chunks = [c for c in chunks if c.usage is not None]
+    assert len(usage_chunks) == 1
+    assert usage_chunks[0].usage.prompt_tokens == 5
+    assert usage_chunks[0].usage.completion_tokens == 4
+    assert usage_chunks[0].usage.total_tokens == 9
+    assert usage_chunks[0].finish_reason == "max_tokens"
+
+
+@pytest.mark.asyncio
 async def test_stream_error_event_raises(monkeypatch):
     events = [
         {"type": "message_start", "message": {"usage": {"input_tokens": 3}}},

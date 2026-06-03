@@ -116,9 +116,16 @@ class InMemoryCircuitBreaker:
 
     async def allow(self, key: str) -> bool:
         try:
-            state = self._get(key).state(self._now(), self._cooldown)
-            # HALF_OPEN lets a single trial through (returns True).
-            return state is not CircuitState.OPEN
+            circuit = self._get(key)
+            state = circuit.state(self._now(), self._cooldown)
+            if state is CircuitState.OPEN:
+                return False
+            if state is CircuitState.HALF_OPEN:
+                # Admit a SINGLE trial: re-arm the cooldown so concurrent/
+                # subsequent callers see OPEN until this trial resolves via
+                # record_success / record_failure. Single event loop => race-free.
+                circuit.opened_at = self._now()
+            return True
         except Exception:  # noqa: BLE001 - never fail closed-path on bookkeeping
             logger.warning("circuit breaker allow() failed for %s", key, exc_info=True)
             return True
@@ -164,6 +171,10 @@ class RedisCircuitBreaker:
     Keys (per breaker key ``k``):
         * ``cb:{k}:fails`` — INCR'd consecutive-failure counter.
         * ``cb:{k}:open``  — presence = OPEN; TTL = cooldown.
+        * ``cb:{k}:armed`` — set while open/half-open (TTL = 3x cooldown) so a
+          failure during the half-open window (open marker expired, armed still
+          present) re-opens the breaker immediately rather than needing another
+          full threshold of failures.
     """
 
     def __init__(
@@ -185,6 +196,15 @@ class RedisCircuitBreaker:
     def _open_key(key: str) -> str:
         return f"cb:{key}:open"
 
+    @staticmethod
+    def _armed_key(key: str) -> str:
+        return f"cb:{key}:armed"
+
+    async def _open(self, key: str) -> None:
+        await self._redis.set(self._open_key(key), "1", ex=self._cooldown)
+        await self._redis.set(self._armed_key(key), "1", ex=self._cooldown * 3)
+        await self._redis.delete(self._fails_key(key))
+
     async def allow(self, key: str) -> bool:
         try:
             return not bool(await self._redis.exists(self._open_key(key)))
@@ -196,7 +216,9 @@ class RedisCircuitBreaker:
 
     async def record_success(self, key: str) -> None:
         try:
-            await self._redis.delete(self._fails_key(key), self._open_key(key))
+            await self._redis.delete(
+                self._fails_key(key), self._open_key(key), self._armed_key(key)
+            )
         except Exception:  # noqa: BLE001
             logger.warning(
                 "circuit breaker record_success() redis error for %s",
@@ -206,13 +228,17 @@ class RedisCircuitBreaker:
 
     async def record_failure(self, key: str) -> None:
         try:
+            open_exists = await self._redis.exists(self._open_key(key))
+            if not open_exists and await self._redis.exists(self._armed_key(key)):
+                # Half-open trial failed -> re-open immediately.
+                await self._open(key)
+                return
             fails = int(await self._redis.incr(self._fails_key(key)))
             # Keep the counter from lingering forever; it should decay over a
             # window comparable to the cooldown.
             await self._redis.expire(self._fails_key(key), self._cooldown)
             if fails >= self._threshold:
-                await self._redis.set(self._open_key(key), "1", ex=self._cooldown)
-                await self._redis.delete(self._fails_key(key))
+                await self._open(key)
         except Exception:  # noqa: BLE001
             logger.warning(
                 "circuit breaker record_failure() redis error for %s",

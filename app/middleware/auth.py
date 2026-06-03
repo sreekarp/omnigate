@@ -61,7 +61,7 @@ async def get_auth_context(
     if resolved is not None:
         project, api_key_id = resolved
         try:
-            await touch_last_used(session, api_key_id)
+            await touch_last_used(api_key_id)
         except Exception:  # noqa: BLE001 - last_used is best-effort
             logger.debug("Failed to touch last_used for api key %s", api_key_id)
         return AuthContext(project=project, user_id=x_user_id, api_key_id=api_key_id)

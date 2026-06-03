@@ -26,7 +26,7 @@ from starlette.responses import StreamingResponse
 from app.config import get_settings
 from app.db.session import SessionLocal, get_session
 from app.logging_config import get_logger
-from app.middleware import AuthContext, enforce_budget
+from app.middleware import AuthContext, enforce_budget, propagate_gateway_headers
 from app.observability import observe_request
 from app.providers.base import ProviderError
 from app.providers.registry import provider_name_for_model
@@ -36,6 +36,7 @@ from app.services.circuit_breaker import circuit_key, get_circuit_breaker
 from app.services.pricing import compute_cost
 from app.services.routing import ResolvedProvider, execute_chat, resolve_provider
 from app.services.usage import record_usage
+from app.utils.resilience import is_retryable
 
 logger = get_logger(__name__)
 
@@ -61,7 +62,13 @@ async def chat(
     project = ctx.project
 
     if request.stream:
-        return await _start_stream(request, ctx, session, redis_client, request_id)
+        stream_resp = await _start_stream(
+            request, ctx, session, redis_client, request_id
+        )
+        # The rate-limit/budget headers live on the injected `response`; copy
+        # them onto the StreamingResponse (FastAPI won't merge them otherwise).
+        propagate_gateway_headers(response, stream_resp)
+        return stream_resp
 
     started = time.perf_counter()
     try:
@@ -172,38 +179,60 @@ def _stream_response(
     async def event_generator() -> AsyncIterator[str]:
         status_str = "ok"
         usage = Usage()
+        model_used = request.model
+        err: Exception | None = None
         try:
             async for chunk in rp.provider.stream(request, rp.api_key):
                 if chunk.text:
                     yield chunk.text
                 if chunk.usage is not None:
                     usage = chunk.usage
+                if chunk.model:
+                    # Provider-confirmed model (e.g. Azure's real base model)
+                    # drives accurate pricing — never bill the routing alias.
+                    model_used = chunk.model
         except ProviderError as exc:
             status_str = "error"
+            err = exc
             logger.warning("Streaming error for request %s: %s", request_id, exc.message)
             yield f"\n[error] {exc.message}"
         except Exception as exc:  # noqa: BLE001 - defensive
             status_str = "error"
+            err = exc
             logger.warning("Unexpected streaming error %s: %s", request_id, exc)
             yield f"\n[error] {exc}"
         finally:
             latency_ms = int((time.perf_counter() - started) * 1000)
+            # An "ok" stream that delivered no usage (client disconnect, or an
+            # upstream that never sent a usage chunk) is recorded as
+            # "incomplete" rather than a $0 success, so it is not mistaken for a
+            # fully-billed request.
+            record_status = status_str
+            if status_str == "ok" and usage.total_tokens == 0:
+                record_status = "incomplete"
+                logger.warning(
+                    "Stream %s ended with no usage; recording status=incomplete",
+                    request_id,
+                )
             cost = (
-                compute_cost(request.model, usage.prompt_tokens, usage.completion_tokens)
-                if status_str == "ok"
+                compute_cost(model_used, usage.prompt_tokens, usage.completion_tokens)
+                if record_status == "ok"
                 else Decimal("0")
             )
+            # Breaker: only transient failures count (mirror the non-stream path);
+            # a 4xx caller error must not trip the breaker.
             try:
-                if status_str == "ok":
-                    await breaker.record_success(breaker_key)
-                else:
+                if status_str != "ok" and err is not None and is_retryable(err):
                     await breaker.record_failure(breaker_key)
+                else:
+                    # ok, or a non-transient error (provider responded) -> healthy.
+                    await breaker.record_success(breaker_key)
             except Exception:  # noqa: BLE001 - breaker is best-effort
                 pass
             observe_request(
                 provider=rp.provider_name,
-                model=request.model,
-                status=status_str,
+                model=model_used,
+                status=record_status,
                 latency_ms=latency_ms,
                 prompt_tokens=usage.prompt_tokens,
                 completion_tokens=usage.completion_tokens,
@@ -218,11 +247,11 @@ def _stream_response(
                         project_id=project.id,
                         user_id=ctx.user_id,
                         provider=rp.provider_name,
-                        model=request.model,
+                        model=model_used,
                         prompt_tokens=usage.prompt_tokens,
                         completion_tokens=usage.completion_tokens,
                         cost=cost,
-                        status=status_str,
+                        status=record_status,
                         latency_ms=latency_ms,
                         request_id=request_id,
                     )

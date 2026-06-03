@@ -143,8 +143,9 @@ class AnthropicProvider(AbstractProvider):
                     )
                 # Usage is split across events: input_tokens from
                 # message_start, output_tokens (cumulative, last-wins) from
-                # each message_delta. Emit one terminal usage chunk at
-                # message_stop.
+                # each message_delta. We emit exactly ONE terminal usage chunk
+                # after the loop (mirroring the other adapters) so usage is
+                # never lost if the upstream stream ends without message_stop.
                 input_tokens = 0
                 output_tokens = 0
                 finish_reason: str | None = None
@@ -176,18 +177,19 @@ class AnthropicProvider(AbstractProvider):
                         stop = event.get("delta", {}).get("stop_reason")
                         if stop:
                             finish_reason = stop
-                    elif etype == "message_stop":
-                        yield StreamChunk(
-                            usage=Usage(
-                                prompt_tokens=input_tokens,
-                                completion_tokens=output_tokens,
-                                total_tokens=input_tokens + output_tokens,
-                            ),
-                            finish_reason=finish_reason,
-                        )
                     elif etype == "error":
                         msg = event.get("error", {}).get("message", "stream error")
                         raise ProviderError(
                             f"Anthropic stream error: {msg}", status_code=502
                         )
-                    # 'ping' and other event types are ignored.
+                    # 'message_stop', 'ping' and other event types are ignored;
+                    # the terminal usage chunk is yielded once below.
+
+                yield StreamChunk(
+                    usage=Usage(
+                        prompt_tokens=input_tokens,
+                        completion_tokens=output_tokens,
+                        total_tokens=input_tokens + output_tokens,
+                    ),
+                    finish_reason=finish_reason,
+                )

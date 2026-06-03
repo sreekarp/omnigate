@@ -189,6 +189,10 @@ async def execute_chat(
             last_error = exc
             if is_retryable(exc):
                 await breaker.record_failure(breaker_key)
+            else:
+                # The provider responded (e.g. 4xx) — it is alive, so resolve
+                # the breaker as a success (also clears any half-open trial).
+                await breaker.record_success(breaker_key)
             logger.warning("Candidate %r failed: %s", model, exc.message)
             continue
         except Exception as exc:  # noqa: BLE001 - defensive; never leak raw errors

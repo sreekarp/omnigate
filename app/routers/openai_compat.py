@@ -16,13 +16,18 @@ import uuid
 from collections.abc import AsyncIterator
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import JSONResponse, StreamingResponse
 
 from app.db.session import SessionLocal, get_session
 from app.logging_config import get_logger
-from app.middleware import AuthContext, enforce_budget, get_auth_context
+from app.middleware import (
+    AuthContext,
+    enforce_budget,
+    get_auth_context,
+    propagate_gateway_headers,
+)
 from app.observability import observe_request
 from app.providers.base import ProviderError
 from app.redis_client import get_redis
@@ -40,10 +45,20 @@ from app.services.circuit_breaker import circuit_key, get_circuit_breaker
 from app.services.pricing import compute_cost
 from app.services.routing import execute_chat, resolve_provider
 from app.services.usage import record_usage
+from app.utils.resilience import is_retryable
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["openai-compat"])
+
+
+def _safe_provider(model: str) -> str:
+    from app.providers.registry import provider_name_for_model
+
+    try:
+        return provider_name_for_model(model)
+    except ProviderError:
+        return "unknown"
 
 
 def _oai_error(message: str, status_code: int, err_type: str = "invalid_request_error") -> JSONResponse:
@@ -61,6 +76,7 @@ def _sse(payload: dict) -> str:
 async def chat_completions(
     payload: OAIChatCompletionRequest,
     request: Request,
+    response: Response,
     ctx: AuthContext = Depends(enforce_budget),
     session: AsyncSession = Depends(get_session),
     redis_client=Depends(get_redis),
@@ -69,15 +85,19 @@ async def chat_completions(
     try:
         internal = to_internal_chat_request(payload)
     except ValueError as exc:
-        return _oai_error(str(exc), 400)
+        out = _oai_error(str(exc), 400)
+        propagate_gateway_headers(response, out)
+        return out
 
     request_id = "chatcmpl-" + uuid.uuid4().hex
     created = int(time.time())
 
     if internal.stream:
-        return await _completions_stream(
+        out = await _completions_stream(
             internal, ctx, session, redis_client, request_id, created, payload.wants_stream_usage()
         )
+        propagate_gateway_headers(response, out)
+        return out
 
     started = time.perf_counter()
     try:
@@ -88,11 +108,13 @@ async def chat_completions(
         latency_ms = int((time.perf_counter() - started) * 1000)
         await record_usage(
             session, org_id=project.org_id, project_id=project.id, user_id=ctx.user_id,
-            provider="unknown", model=internal.model, prompt_tokens=0, completion_tokens=0,
+            provider=_safe_provider(internal.model), model=internal.model, prompt_tokens=0, completion_tokens=0,
             cost=Decimal("0"), status="error", latency_ms=latency_ms, request_id=request_id,
         )
-        observe_request(provider="unknown", model=internal.model, status="error", latency_ms=latency_ms)
-        return _oai_error(exc.message, exc.status_code, "provider_error" if exc.status_code >= 500 else "invalid_request_error")
+        observe_request(provider=_safe_provider(internal.model), model=internal.model, status="error", latency_ms=latency_ms)
+        out = _oai_error(exc.message, exc.status_code, "provider_error" if exc.status_code >= 500 else "invalid_request_error")
+        propagate_gateway_headers(response, out)
+        return out
 
     latency_ms = int((time.perf_counter() - started) * 1000)
     result = outcome.response
@@ -108,12 +130,14 @@ async def chat_completions(
         latency_ms=latency_ms, prompt_tokens=result.usage.prompt_tokens,
         completion_tokens=result.usage.completion_tokens, cost_usd=float(outcome.cost),
     )
-    return JSONResponse(content=build_completion_response(result, created))
+    out = JSONResponse(content=build_completion_response(result, created))
+    propagate_gateway_headers(response, out)
+    return out
 
 
 async def _completions_stream(
     internal, ctx, session, redis_client, request_id, created, include_usage,
-) -> StreamingResponse:
+) -> Response:
     project = ctx.project
     try:
         rp = await resolve_provider(session, project, internal.model)
@@ -132,6 +156,8 @@ async def _completions_stream(
         status_str = "ok"
         usage = Usage()
         finish = "stop"
+        model_used = internal.model
+        err: Exception | None = None
         try:
             yield _sse(build_role_chunk(id=request_id, created=created, model=model_label))
             async for chunk in rp.provider.stream(internal, rp.api_key):
@@ -141,6 +167,8 @@ async def _completions_stream(
                     usage = chunk.usage
                 if chunk.finish_reason:
                     finish = chunk.finish_reason
+                if chunk.model:
+                    model_used = chunk.model
             yield _sse(build_chunk("", id=request_id, created=created, model=model_label, finish_reason=finish))
             if include_usage:
                 yield _sse(build_usage_chunk(
@@ -150,27 +178,35 @@ async def _completions_stream(
                 ))
         except ProviderError as exc:
             status_str = "error"
+            err = exc
             logger.warning("compat stream error %s: %s", request_id, exc.message)
             yield _sse({"error": {"message": exc.message, "type": "provider_error"}})
         except Exception as exc:  # noqa: BLE001
             status_str = "error"
+            err = exc
             logger.warning("compat stream unexpected %s: %s", request_id, exc)
             yield _sse({"error": {"message": str(exc), "type": "provider_error"}})
         finally:
             # Always terminate the SSE stream (even on error).
             yield "data: [DONE]\n\n"
             latency_ms = int((time.perf_counter() - started) * 1000)
+            record_status = status_str
+            if status_str == "ok" and usage.total_tokens == 0:
+                record_status = "incomplete"
+                logger.warning("compat stream %s ended with no usage; status=incomplete", request_id)
             cost = (
-                compute_cost(internal.model, usage.prompt_tokens, usage.completion_tokens)
-                if status_str == "ok" else Decimal("0")
+                compute_cost(model_used, usage.prompt_tokens, usage.completion_tokens)
+                if record_status == "ok" else Decimal("0")
             )
             try:
-                await (breaker.record_success(breaker_key) if status_str == "ok"
-                       else breaker.record_failure(breaker_key))
+                if status_str != "ok" and err is not None and is_retryable(err):
+                    await breaker.record_failure(breaker_key)
+                else:
+                    await breaker.record_success(breaker_key)
             except Exception:  # noqa: BLE001
                 pass
             observe_request(
-                provider=rp.provider_name, model=internal.model, status=status_str,
+                provider=rp.provider_name, model=model_used, status=record_status,
                 latency_ms=latency_ms, prompt_tokens=usage.prompt_tokens,
                 completion_tokens=usage.completion_tokens, cost_usd=float(cost),
             )
@@ -178,9 +214,9 @@ async def _completions_stream(
                 async with SessionLocal() as fresh:
                     await record_usage(
                         fresh, org_id=project.org_id, project_id=project.id, user_id=ctx.user_id,
-                        provider=rp.provider_name, model=internal.model,
+                        provider=rp.provider_name, model=model_used,
                         prompt_tokens=usage.prompt_tokens, completion_tokens=usage.completion_tokens,
-                        cost=cost, status=status_str, latency_ms=latency_ms, request_id=request_id,
+                        cost=cost, status=record_status, latency_ms=latency_ms, request_id=request_id,
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.error("compat stream usage record failed %s: %s", request_id, exc)

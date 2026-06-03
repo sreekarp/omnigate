@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import func
 
+from app.db.session import SessionLocal
 from app.models.db import ApiKey, Project
 from app.security import generate_api_key, hash_api_key, key_display_prefix
 
@@ -117,22 +118,21 @@ async def resolve_api_key(
     return row.project, row.id
 
 
-async def touch_last_used(
-    session: AsyncSession,
-    api_key_id: uuid.UUID,
-) -> None:
+async def touch_last_used(api_key_id: uuid.UUID) -> None:
     """Best-effort update of ``last_used_at`` for an API key.
 
-    Issues an ``UPDATE ... SET last_used_at = now()`` but deliberately does NOT
-    commit: this runs inside the request's auth dependency, and the later
-    request commit (e.g. in ``record_usage``) flushes it. This keeps the touch
-    cheap and avoids a stray mid-dependency-chain commit that could perturb the
-    budget read. If the request errors before any commit, the touch is simply
-    lost — an acceptable miss. Non-fatal by design; callers may ignore failures.
+    Runs in its OWN short-lived session and commits immediately, so it never
+    holds a row lock on the ``api_keys`` row across the rest of the request
+    (auth runs in the request's shared session, which stays open through the
+    provider call — an uncommitted UPDATE there would lock the row for the whole
+    request and serialise concurrent callers sharing one key). Non-fatal: any
+    error is swallowed by the caller.
     """
     stmt = (
         update(ApiKey)
         .where(ApiKey.id == api_key_id)
         .values(last_used_at=func.now())
     )
-    await session.execute(stmt)
+    async with SessionLocal() as session:
+        await session.execute(stmt)
+        await session.commit()

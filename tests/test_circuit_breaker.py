@@ -73,6 +73,19 @@ async def test_half_opens_after_cooldown():
 
 
 @pytest.mark.asyncio
+async def test_half_open_admits_single_trial():
+    # Regression: when half-open, exactly ONE trial is admitted; concurrent
+    # callers (same event loop, no await between) see OPEN until it resolves.
+    clock = FakeClock()
+    cb = _breaker(clock, threshold=1, cooldown=30.0)
+    await cb.record_failure("k")  # -> OPEN
+    assert await cb.allow("k") is False
+    clock.advance(30.0)  # -> HALF_OPEN
+    assert await cb.allow("k") is True   # first trial admitted
+    assert await cb.allow("k") is False  # second caller rejected (single trial)
+
+
+@pytest.mark.asyncio
 async def test_success_closes_breaker():
     clock = FakeClock()
     cb = _breaker(clock, threshold=2, cooldown=30.0)

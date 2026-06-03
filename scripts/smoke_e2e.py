@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import httpx
 
 from app.main import app
+from app.providers import azure_openai as azure_mod
 from app.providers import openai as openai_mod
 from app.schemas.chat import ChatResponse, StreamChunk, Usage
 
@@ -39,9 +40,22 @@ async def fake_stream(self, request, api_key):  # noqa: ANN001
     yield StreamChunk(usage=Usage(prompt_tokens=10, completion_tokens=2, total_tokens=12), finish_reason="stop")
 
 
+async def fake_azure_stream(self, request, api_key):  # noqa: ANN001
+    # Azure echoes the real base model (e.g. 'gpt-4o') in the terminal chunk,
+    # NOT the 'azure/<deployment>' routing alias — billing must use it.
+    yield StreamChunk(text="az ")
+    yield StreamChunk(text="reply")
+    yield StreamChunk(
+        usage=Usage(prompt_tokens=100, completion_tokens=50, total_tokens=150),
+        finish_reason="stop",
+        model="gpt-4o",
+    )
+
+
 async def main() -> None:
     openai_mod.OpenAIProvider.chat = fake_chat
     openai_mod.OpenAIProvider.stream = fake_stream
+    azure_mod.AzureOpenAIProvider.stream = fake_azure_stream
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
@@ -98,8 +112,25 @@ async def main() -> None:
         r = await c.get("/v1/keys/api", headers=H)
         check("list api keys", r.status_code == 200 and len(r.json()) == 1, str(r.status_code))
 
+        # Azure streaming billing regression: store an azure cred (with meta),
+        # stream an azure/<deployment> model, and confirm it bills under the
+        # provider-returned base model (gpt-4o) with cost > 0 — not $0.
+        r = await c.post("/v1/keys", headers=H, json={
+            "provider": "azure", "api_key": "az-fake-key",
+            "meta": {"endpoint": "https://demo.openai.azure.com", "deployment": "gpt4o-prod"},
+        })
+        check("store azure key -> 204", r.status_code == 204, str(r.status_code))
+        async with c.stream("POST", "/v1/chat", headers=H, json={"model": "azure/gpt4o-prod", "messages": [{"role": "user", "content": "hi"}], "stream": True}) as sr:
+            az_text = "".join([chunk async for chunk in sr.aiter_text()])
+        check("azure stream text", "az reply" in az_text, repr(az_text)[:80])
+
         # metrics (give the streaming finally a moment to commit)
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.4)
+        rm = await c.get("/v1/metrics?range=24h&group_by=model", headers=H)
+        jm = rm.json() if rm.status_code == 200 else {}
+        gpt4o = [b for b in jm.get("breakdown", []) if b["key"] == "gpt-4o"]
+        check("azure stream billed under base model gpt-4o (cost>0)",
+              bool(gpt4o) and gpt4o[0]["cost_usd"] > 0, str(gpt4o)[:160])
         r = await c.get("/v1/metrics?range=24h&group_by=model", headers=H)
         j = r.json() if r.status_code == 200 else {}
         check("metrics totals", r.status_code == 200 and j["totals"]["requests"] >= 4, str(j.get("totals"))[:200])
