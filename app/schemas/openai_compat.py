@@ -63,8 +63,12 @@ class OAIChatCompletionRequest(BaseModel):
     frequency_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
     seed: int | None = None
     stream: bool = False
+    stream_options: dict[str, Any] | None = None
     user: str | None = None
     n: int | None = Field(default=None, ge=1)
+
+    def wants_stream_usage(self) -> bool:
+        return bool(self.stream_options and self.stream_options.get("include_usage"))
 
 
 # Mapping of inbound OpenAI roles onto the internal text-only role set.

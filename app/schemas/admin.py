@@ -11,12 +11,14 @@ from pydantic import BaseModel, Field
 class OrganisationCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     daily_budget: Decimal = Field(default=Decimal("0"), ge=0)
+    monthly_budget: Decimal = Field(default=Decimal("0"), ge=0)
 
 
 class OrganisationOut(BaseModel):
     id: uuid.UUID
     name: str
     daily_budget: Decimal
+    monthly_budget: Decimal
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -27,6 +29,7 @@ class ProjectCreate(BaseModel):
     org_id: uuid.UUID
     name: str = Field(..., min_length=1, max_length=255)
     daily_budget: Decimal = Field(default=Decimal("0"), ge=0)
+    monthly_budget: Decimal = Field(default=Decimal("0"), ge=0)
     rate_limit_per_min: int = Field(default=60, ge=1)
 
 
@@ -36,6 +39,7 @@ class ProjectOut(BaseModel):
     name: str
     key_prefix: str
     daily_budget: Decimal
+    monthly_budget: Decimal
     rate_limit_per_min: int
     created_at: datetime
 

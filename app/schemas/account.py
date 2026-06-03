@@ -1,11 +1,12 @@
 """Schemas for self-serve signup and provider-key management."""
 
 import uuid
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-ProviderName = Literal["openai", "anthropic"]
+ProviderName = Literal["openai", "anthropic", "gemini", "azure"]
 
 
 class SignupRequest(BaseModel):
@@ -28,7 +29,15 @@ class SignupResponse(BaseModel):
 
 class SetProviderKeyRequest(BaseModel):
     provider: ProviderName
-    api_key: str = Field(..., min_length=8, description="Your own OpenAI/Anthropic key")
+    api_key: str = Field(..., min_length=8, description="Your own provider key")
+    meta: dict | None = Field(
+        default=None,
+        description=(
+            "Non-secret provider config. For Azure: "
+            '{"endpoint": "https://<res>.openai.azure.com", '
+            '"deployment": "<name>", "api_version": "2024-10-21"}.'
+        ),
+    )
 
 
 class MeResponse(BaseModel):
@@ -37,4 +46,6 @@ class MeResponse(BaseModel):
     project_name: str
     key_prefix: str
     rate_limit_per_min: int
+    daily_budget: Decimal
+    monthly_budget: Decimal
     configured_providers: list[str]

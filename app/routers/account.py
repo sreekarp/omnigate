@@ -8,7 +8,7 @@ The gateway api key returned by signup is the developer's identity; it is what
 authenticates the /v1/keys and /v1/chat calls.
 """
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -59,18 +59,44 @@ async def signup(
     )
 
 
+def _validate_azure_meta(meta: dict | None) -> dict:
+    """Validate the Azure credential metadata (endpoint + deployment)."""
+    meta = meta or {}
+    endpoint = meta.get("endpoint")
+    deployment = meta.get("deployment")
+    if not endpoint or not str(endpoint).startswith("https://"):
+        raise HTTPException(
+            status_code=400,
+            detail="Azure provider requires meta.endpoint (an https:// URL).",
+        )
+    if not deployment:
+        raise HTTPException(
+            status_code=400,
+            detail="Azure provider requires meta.deployment (the deployment name).",
+        )
+    return meta
+
+
 @router.post("/keys", status_code=status.HTTP_204_NO_CONTENT)
 async def set_key(
     payload: SetProviderKeyRequest,
     ctx: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    """Store (or replace) the caller's own provider key, encrypted at rest."""
+    """Store (or replace) the caller's own provider key, encrypted at rest.
+
+    For Azure, ``meta`` must carry ``endpoint`` and ``deployment``.
+    """
+    meta = payload.meta
+    if payload.provider == "azure":
+        meta = _validate_azure_meta(meta)
+
     await set_provider_key(
         session,
         project_id=ctx.project.id,
         provider=payload.provider,
         api_key=payload.api_key,
+        meta=meta,
     )
     logger.info(
         "Stored %s key for project %s", payload.provider, ctx.project.id
@@ -90,5 +116,7 @@ async def me(
         project_name=project.name,
         key_prefix=project.key_prefix,
         rate_limit_per_min=project.rate_limit_per_min,
+        daily_budget=project.daily_budget,
+        monthly_budget=project.monthly_budget,
         configured_providers=providers,
     )
