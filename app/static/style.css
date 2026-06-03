@@ -1,0 +1,81 @@
+:root {
+  --bg: #0f1115;
+  --panel: #181b22;
+  --border: #2a2f3a;
+  --text: #e6e8eb;
+  --muted: #9aa3af;
+  --accent: #6aa6ff;
+  --warn: #f0b429;
+  --over: #ff5d5d;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand { color: var(--text); font-weight: 700; text-decoration: none; font-size: 18px; }
+.generated { color: var(--muted); font-size: 13px; }
+
+.container { max-width: 1000px; margin: 0 auto; padding: 24px; }
+
+h1 { font-size: 22px; margin: 0 0 16px; }
+h2 { font-size: 18px; margin: 28px 0 12px; }
+
+a { color: var(--accent); }
+
+.meta { color: var(--muted); margin-top: -8px; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+th, td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .03em; }
+tbody tr:last-child td { border-bottom: none; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+code { background: #11141a; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+
+.empty { color: var(--muted); }
+
+.warn { color: var(--warn); font-weight: 600; }
+.over { color: var(--over); font-weight: 700; }
+
+.cards { display: flex; gap: 16px; margin: 16px 0; flex-wrap: wrap; }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  min-width: 180px;
+}
+.card-label { color: var(--muted); font-size: 13px; }
+.card-value { font-size: 24px; font-weight: 700; margin-top: 6px; }
+
+.status { padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+.status-ok { background: #14361f; color: #66d39a; }
+.status-error { background: #3a1717; color: #ff8a8a; }

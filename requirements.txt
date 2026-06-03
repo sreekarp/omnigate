@@ -1,0 +1,29 @@
+# --- Web framework ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# --- Database (async) ---
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+greenlet==3.1.1            # required by SQLAlchemy async
+
+# --- Redis (async) ---
+redis==5.2.1              # provides redis.asyncio (aioredis is merged into this)
+
+# --- HTTP client for providers ---
+httpx==0.28.1
+
+# --- Schemas / settings ---
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# --- Templating for dashboard ---
+jinja2==3.1.5
+
+# --- Encryption for stored provider keys (BYOK vault) ---
+cryptography==44.0.0
+
+# --- Dev / test ---
+pytest==8.3.4
+pytest-asyncio==0.25.0

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} — LLM Gateway{% endblock %}
+{% block content %}
+<p><a href="/">&larr; All organisations</a></p>
+<h1>{{ project.name }}</h1>
+<p class="meta">
+  Organisation: <strong>{{ org.name if org else "—" }}</strong> ·
+  Key: <code>{{ project.key_prefix }}…</code> ·
+  Rate limit: {{ project.rate_limit_per_min }}/min
+</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Requests today</div>
+    <div class="card-value">{{ request_count }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Spend today</div>
+    <div class="card-value">${{ "%.6f"|format(spend) }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Daily budget</div>
+    <div class="card-value">
+      {% if project.daily_budget and project.daily_budget > 0 %}${{ "%.2f"|format(project.daily_budget) }}{% else %}Unlimited{% endif %}
+    </div>
+  </div>
+</div>
+
+<h2>Recent requests (latest 50)</h2>
+{% if not recent %}
+  <p class="empty">No requests recorded yet.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Time (UTC)</th>
+      <th>User</th>
+      <th>Provider</th>
+      <th>Model</th>
+      <th class="num">Prompt</th>
+      <th class="num">Completion</th>
+      <th class="num">Cost</th>
+      <th class="num">Latency</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in recent %}
+    <tr>
+      <td>{{ r.created_at.strftime("%m-%d %H:%M:%S") }}</td>
+      <td>{{ r.user_id or "—" }}</td>
+      <td>{{ r.provider }}</td>
+      <td>{{ r.model }}</td>
+      <td class="num">{{ r.prompt_tokens }}</td>
+      <td class="num">{{ r.completion_tokens }}</td>
+      <td class="num">${{ "%.6f"|format(r.cost) }}</td>
+      <td class="num">{{ r.latency_ms }} ms</td>
+      <td><span class="status status-{{ r.status }}">{{ r.status }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

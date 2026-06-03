@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Overview — LLM Gateway{% endblock %}
+{% block content %}
+<h1>Organisations — today's usage (UTC)</h1>
+
+{% if not orgs %}
+  <p class="empty">No organisations yet. Create one via <code>POST /v1/admin/orgs</code>.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Organisation</th>
+      <th class="num">Requests today</th>
+      <th class="num">Spend today</th>
+      <th class="num">Daily budget</th>
+      <th class="num">Used</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in orgs %}
+    <tr>
+      <td>{{ row.org.name }}</td>
+      <td class="num">{{ row.requests }}</td>
+      <td class="num">${{ "%.6f"|format(row.spend) }}</td>
+      <td class="num">
+        {% if row.budget and row.budget > 0 %}${{ "%.2f"|format(row.budget) }}{% else %}—{% endif %}
+      </td>
+      <td class="num">
+        {% if row.budget and row.budget > 0 %}
+          {% set pct = (row.spend / row.budget * 100) %}
+          <span class="{% if pct >= 100 %}over{% elif pct >= 80 %}warn{% endif %}">
+            {{ "%.0f"|format(pct) }}%
+          </span>
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

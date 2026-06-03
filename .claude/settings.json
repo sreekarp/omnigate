@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./.venv/Scripts/python.exe -m pytest tests/test_pricing.py tests/test_routing.py tests/test_security.py -q)",
+      "Bash(DATABASE_URL=\"postgresql+asyncpg://t:t@localhost/t\" REDIS_URL=\"redis://localhost:6379/0\" SECRET_KEY=\"x\" ADMIN_API_KEY=\"y\" ./.venv/Scripts/python.exe -c \"from app.main import app; print\\('APP IMPORT OK'\\); print\\('routes:', sorted\\({r.path for r in app.routes}\\)\\)\")",
+      "Bash(./.venv/Scripts/python.exe -m pip install --quiet \"sqlalchemy[asyncio]>=2\" greenlet asyncpg)",
+      "Bash(echo \"EXIT: $?\")"
+    ]
+  }
+}
