@@ -150,15 +150,16 @@ def _cache_hit_count() -> ColumnElement[int]:
 
 
 def _percentile(quantile: float) -> ColumnElement[float | None]:
-    """``percentile_cont(q) FILTER (WHERE not error) WITHIN GROUP (latency)``.
+    """``percentile_cont(q) WITHIN GROUP (ORDER BY latency ASC) FILTER (WHERE not error)``.
 
-    The ``.filter().within_group()`` builder order is the stable form across
-    SQLAlchemy 2.0.x; a SQL-compile test can assert the emitted string.
+    Postgres requires ``WITHIN GROUP`` to precede ``FILTER``; the builder must
+    therefore be ``.within_group(...).filter(...)`` (the reverse order compiles
+    to a string but is rejected by Postgres at execution time).
     """
     return (
         func.percentile_cont(quantile)
-        .filter(~U.status.in_(ERROR_STATUSES))
         .within_group(U.latency_ms.asc())
+        .filter(~U.status.in_(ERROR_STATUSES))
     )
 
 
