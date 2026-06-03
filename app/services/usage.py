@@ -18,6 +18,11 @@ def _utc_day_start() -> datetime:
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def _utc_month_start() -> datetime:
+    now = datetime.now(timezone.utc)
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
 async def project_spend_today(session: AsyncSession, project_id: uuid.UUID) -> Decimal:
     """Sum of today's (UTC) cost for a project."""
     stmt = select(func.coalesce(func.sum(UsageRecord.cost), 0)).where(
@@ -33,6 +38,28 @@ async def org_spend_today(session: AsyncSession, org_id: uuid.UUID) -> Decimal:
     stmt = select(func.coalesce(func.sum(UsageRecord.cost), 0)).where(
         UsageRecord.org_id == org_id,
         UsageRecord.created_at >= _utc_day_start(),
+    )
+    result = await session.execute(stmt)
+    return Decimal(result.scalar_one())
+
+
+async def project_spend_this_month(
+    session: AsyncSession, project_id: uuid.UUID
+) -> Decimal:
+    """Sum of this calendar month's (UTC) cost for a project."""
+    stmt = select(func.coalesce(func.sum(UsageRecord.cost), 0)).where(
+        UsageRecord.project_id == project_id,
+        UsageRecord.created_at >= _utc_month_start(),
+    )
+    result = await session.execute(stmt)
+    return Decimal(result.scalar_one())
+
+
+async def org_spend_this_month(session: AsyncSession, org_id: uuid.UUID) -> Decimal:
+    """Sum of this calendar month's (UTC) cost across all projects in an org."""
+    stmt = select(func.coalesce(func.sum(UsageRecord.cost), 0)).where(
+        UsageRecord.org_id == org_id,
+        UsageRecord.created_at >= _utc_month_start(),
     )
     result = await session.execute(stmt)
     return Decimal(result.scalar_one())

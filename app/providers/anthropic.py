@@ -14,13 +14,23 @@ import httpx
 from app.config import get_settings
 from app.logging_config import get_logger
 from app.providers.base import AbstractProvider, ProviderError
-from app.schemas.chat import ChatRequest, ChatResponse, Usage
+from app.schemas.chat import ChatRequest, ChatResponse, StreamChunk, Usage
 
 logger = get_logger(__name__)
 
 _BASE_URL = "https://api.anthropic.com/v1/messages"
 _API_VERSION = "2023-06-01"
 _DEFAULT_MAX_TOKENS = 1024
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse a delta-seconds ``Retry-After`` header into a float (or ``None``)."""
+    if not value:
+        return None
+    try:
+        return float(value.strip())
+    except (TypeError, ValueError):
+        return None
 
 
 class AnthropicProvider(AbstractProvider):
@@ -57,6 +67,11 @@ class AnthropicProvider(AbstractProvider):
             payload["system"] = "\n\n".join(system_parts)
         if request.temperature is not None:
             payload["temperature"] = request.temperature
+        if request.top_p is not None:
+            payload["top_p"] = request.top_p
+        stops = request.stop_sequences()
+        if stops:
+            payload["stop_sequences"] = stops
         return payload
 
     async def chat(self, request: ChatRequest, api_key: str) -> ChatResponse:
@@ -75,6 +90,9 @@ class AnthropicProvider(AbstractProvider):
             raise ProviderError(
                 f"Anthropic error {resp.status_code}: {resp.text}",
                 status_code=resp.status_code,
+                retry_after=_parse_retry_after(resp.headers.get("Retry-After"))
+                if resp.status_code == 429
+                else None,
             )
 
         data = resp.json()
@@ -97,9 +115,12 @@ class AnthropicProvider(AbstractProvider):
                 completion_tokens=completion_tokens,
                 total_tokens=prompt_tokens + completion_tokens,
             ),
+            finish_reason=data.get("stop_reason"),
         )
 
-    async def stream(self, request: ChatRequest, api_key: str) -> AsyncIterator[str]:
+    async def stream(
+        self, request: ChatRequest, api_key: str
+    ) -> AsyncIterator[StreamChunk]:
         timeout = self._settings.request_timeout_seconds
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream(
@@ -111,9 +132,22 @@ class AnthropicProvider(AbstractProvider):
                 if resp.status_code >= 400:
                     body = await resp.aread()
                     raise ProviderError(
-                        f"Anthropic error {resp.status_code}: {body.decode(errors='replace')}",
+                        f"Anthropic error {resp.status_code}: "
+                        f"{body.decode(errors='replace')}",
                         status_code=resp.status_code,
+                        retry_after=_parse_retry_after(
+                            resp.headers.get("Retry-After")
+                        )
+                        if resp.status_code == 429
+                        else None,
                     )
+                # Usage is split across events: input_tokens from
+                # message_start, output_tokens (cumulative, last-wins) from
+                # each message_delta. Emit one terminal usage chunk at
+                # message_stop.
+                input_tokens = 0
+                output_tokens = 0
+                finish_reason: str | None = None
                 async for line in resp.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
@@ -123,7 +157,37 @@ class AnthropicProvider(AbstractProvider):
                     except json.JSONDecodeError:
                         logger.warning("Skipping malformed Anthropic stream chunk")
                         continue
-                    if event.get("type") == "content_block_delta":
-                        piece = event.get("delta", {}).get("text")
-                        if piece:
-                            yield piece
+                    etype = event.get("type")
+                    if etype == "message_start":
+                        input_tokens = (
+                            event.get("message", {})
+                            .get("usage", {})
+                            .get("input_tokens", 0)
+                        )
+                    elif etype == "content_block_delta":
+                        delta = event.get("delta", {})
+                        if delta.get("type") == "text_delta" and delta.get("text"):
+                            yield StreamChunk(text=delta["text"])
+                    elif etype == "message_delta":
+                        usage = event.get("usage") or {}
+                        if "output_tokens" in usage:
+                            # cumulative; last value wins
+                            output_tokens = usage["output_tokens"]
+                        stop = event.get("delta", {}).get("stop_reason")
+                        if stop:
+                            finish_reason = stop
+                    elif etype == "message_stop":
+                        yield StreamChunk(
+                            usage=Usage(
+                                prompt_tokens=input_tokens,
+                                completion_tokens=output_tokens,
+                                total_tokens=input_tokens + output_tokens,
+                            ),
+                            finish_reason=finish_reason,
+                        )
+                    elif etype == "error":
+                        msg = event.get("error", {}).get("message", "stream error")
+                        raise ProviderError(
+                            f"Anthropic stream error: {msg}", status_code=502
+                        )
+                    # 'ping' and other event types are ignored.

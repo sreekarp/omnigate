@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llm-gateway"
+version = "0.2.0"
+description = "Production-grade multi-provider LLM gateway: auth, rate limiting, budgets, BYOK vault, cost tracking, metrics, and an OpenAI-compatible API."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "LLM Gateway" }]
+keywords = ["llm", "gateway", "openai", "anthropic", "gemini", "azure", "proxy", "fastapi"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Framework :: FastAPI",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.34",
+  "sqlalchemy[asyncio]>=2.0.36",
+  "asyncpg>=0.30",
+  "alembic>=1.14",
+  "greenlet>=3.1",
+  "redis>=5.2",
+  "httpx>=0.28",
+  "pydantic>=2.10",
+  "pydantic-settings>=2.7",
+  "jinja2>=3.1",
+  "cryptography>=44.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.25"]
+
+[project.urls]
+Homepage = "https://github.com/your-org/llm-gateway"
+Documentation = "https://github.com/your-org/llm-gateway#readme"
+
+[project.scripts]
+llm-gateway = "app.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "app/**",
+  "alembic/**",
+  "alembic.ini",
+  "scripts/**",
+  "README.md",
+  "requirements.txt",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
