@@ -30,6 +30,25 @@ class Settings(BaseSettings):
     default_rate_limit_per_min: int = 60
     request_timeout_seconds: float = 60.0
     log_level: str = "INFO"
+    # "text" (human) or "json" (structured) application logs.
+    log_format: str = "text"
+
+    # --- Resilience: retry ---
+    retry_max_attempts: int = 3
+    retry_base_delay_seconds: float = 0.25
+    retry_max_delay_seconds: float = 8.0
+    retry_jitter_seconds: float = 0.25
+
+    # --- Resilience: circuit breaker ---
+    circuit_breaker_enabled: bool = True
+    circuit_breaker_fail_threshold: int = 5
+    circuit_breaker_cooldown_seconds: float = 30.0
+    circuit_breaker_backend: str = "memory"  # "memory" | "redis"
+
+    # --- Response cache (opt-in; also requires a per-request flag) ---
+    response_cache_enabled: bool = False
+    response_cache_ttl_seconds: int = 300
+    response_cache_prefix: str = "respcache:"
 
 
 @lru_cache

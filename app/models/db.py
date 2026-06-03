@@ -11,6 +11,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    JSON,
     DateTime,
     ForeignKey,
     Index,
@@ -45,6 +46,10 @@ class Organisation(Base):
     daily_budget: Mapped[Decimal] = mapped_column(
         Numeric(12, 4), nullable=False, default=Decimal("0")
     )
+    # Monthly budget in USD (calendar month, UTC). 0 means "no limit".
+    monthly_budget: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4), nullable=False, server_default="0", default=Decimal("0")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -74,6 +79,10 @@ class Project(Base):
     daily_budget: Mapped[Decimal] = mapped_column(
         Numeric(12, 4), nullable=False, default=Decimal("0")
     )
+    # Monthly budget in USD (calendar month, UTC). 0 means "no limit".
+    monthly_budget: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4), nullable=False, server_default="0", default=Decimal("0")
+    )
     rate_limit_per_min: Mapped[int] = mapped_column(
         Integer, nullable=False, default=60
     )
@@ -90,8 +99,47 @@ class Project(Base):
         back_populates="project",
         cascade="all, delete-orphan",
     )
+    api_keys: Mapped[list["ApiKey"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (Index("ix_projects_org_id", "org_id"),)
+
+
+class ApiKey(Base):
+    """A named gateway API key for a project (multiple per project).
+
+    Auth resolves a presented key against ``api_keys`` (unrevoked) first, then
+    falls back to the legacy ``projects.key_hash`` for backward compatibility.
+    Only the SHA-256 hash and a short non-secret prefix are stored.
+    """
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    key_prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    project: Mapped["Project"] = relationship(back_populates="api_keys")
+
+    __table_args__ = (Index("ix_api_keys_project_id", "project_id"),)
 
 
 class ProviderCredential(Base):
@@ -109,9 +157,11 @@ class ProviderCredential(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    # "openai" | "anthropic"
+    # "openai" | "anthropic" | "gemini" | "azure"
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     encrypted_key: Mapped[str] = mapped_column(Text, nullable=False)
+    # Non-secret provider config (e.g. Azure endpoint/deployment/api_version).
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
