@@ -27,13 +27,46 @@ class Message(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Outbound chat request body (validated on the client before sending)."""
+    """Outbound chat request body (validated on the client before sending).
+
+    Carries both the HTTP-client fields and the in-process engine's sampling
+    passthrough + gateway-style features (``fallback_models``, ``cache``). Every
+    field beyond ``model``/``messages`` is optional, so older callers and the
+    server stay compatible.
+    """
 
     model: str
     messages: list[Message] = Field(min_length=1)
     max_tokens: Optional[int] = Field(default=None, ge=1)
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     stream: bool = False
+
+    # --- Optional sampling passthrough (mapped per-provider; ignored where unsupported) ---
+    top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    stop: str | list[str] | None = Field(default=None)
+    presence_penalty: Optional[float] = Field(default=None, ge=-2.0, le=2.0)
+    frequency_penalty: Optional[float] = Field(default=None, ge=-2.0, le=2.0)
+    seed: Optional[int] = Field(default=None)
+
+    # --- Engine features (additive) ---
+    fallback_models: list[str] = Field(
+        default_factory=list,
+        max_length=5,
+        description="Models to try, in order, if the primary fails.",
+    )
+    cache: Optional[bool] = Field(
+        default=None,
+        description="Opt in/out of the response cache for this request "
+        "(only effective for deterministic, non-streaming calls).",
+    )
+
+    def stop_sequences(self) -> list[str]:
+        """Normalise ``stop`` into a list (possibly empty)."""
+        if self.stop is None:
+            return []
+        if isinstance(self.stop, str):
+            return [self.stop]
+        return list(self.stop)
 
 
 class Usage(BaseModel):
@@ -65,15 +98,22 @@ class ChatResponse(BaseModel):
 
 
 class StreamChunk(BaseModel):
-    """A piece of streamed text plus provenance.
+    """A piece of a streamed completion.
 
-    Streaming is plain text (not SSE) and carries no usage/cost; only ``text``
-    and the originating ``request_id`` (from the ``x-request-id`` header) are
-    available.
+    Hosted-client streaming is plain text and only populates ``text`` and the
+    originating ``request_id`` (from the ``x-request-id`` header). The in-process
+    engine additionally populates ``usage``/``finish_reason``/``model``: content
+    chunks carry ``text``, and exactly one terminal chunk carries the final
+    :class:`Usage`. ``usage`` values are absolute/last-wins — never re-summed.
     """
+
+    model_config = ConfigDict(extra="ignore")
 
     text: str = ""
     request_id: Optional[str] = None
+    usage: Optional[Usage] = None
+    finish_reason: Optional[str] = None
+    model: Optional[str] = None
 
 
 class SignupResponse(BaseModel):
