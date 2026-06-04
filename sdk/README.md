@@ -1,10 +1,10 @@
-# llm-gateway-sdk
+# omnillm
 
-A small, fully-typed Python client for the **LLM Gateway** — sync **and** async,
+A small, fully-typed Python client for the **OmniLLM** — sync **and** async,
 streaming-aware, with typed errors. Depends only on `httpx` and `pydantic`.
 
 ```
-pip install llm-gateway-sdk
+pip install omnillm
 ```
 
 The SDK is a standalone package: it imports nothing from the gateway server, and
@@ -13,7 +13,7 @@ mirrors the gateway's wire schema with its own Pydantic models.
 ## Quick start (sync)
 
 ```python
-from llm_gateway import Client
+from omnillm import Client
 
 # Public client (no key) just for signup:
 with Client(base_url="https://gw.example.com") as anon:
@@ -65,7 +65,7 @@ iterator. Use `async with` / `await client.aclose()`.
 
 ```python
 import asyncio
-from llm_gateway import AsyncClient, BudgetExceededError, RateLimitError
+from omnillm import AsyncClient, BudgetExceededError, RateLimitError
 
 async def main():
     async with AsyncClient(api_key="llmg_...", base_url="https://gw.example.com") as c:
@@ -108,7 +108,7 @@ exponential backoff + jitter (honoring `Retry-After`). Configure via
 `retries=` or a full `RetryConfig`:
 
 ```python
-from llm_gateway import Client, RetryConfig
+from omnillm import Client, RetryConfig
 
 Client(api_key="llmg_...", retries=3)
 Client(api_key="llmg_...", retry_config=RetryConfig(max_retries=5, backoff_max=20))

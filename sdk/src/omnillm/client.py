@@ -1,4 +1,4 @@
-"""Synchronous client for the LLM Gateway.
+"""Synchronous client for the OmniLLM.
 
 Wraps an ``httpx.Client``, sends the ``x-api-key`` gateway key, retries 429/5xx
 and transport errors with hand-rolled exponential backoff, and raises the SDK's
@@ -27,13 +27,13 @@ from .models import (
     StreamChunk,
 )
 
-logger = logging.getLogger("llm_gateway")
+logger = logging.getLogger("omnillm")
 
-_USER_AGENT = f"llm-gateway-sdk/{__version__}"
+_USER_AGENT = f"omnillm/{__version__}"
 
 
 class Client:
-    """Synchronous LLM Gateway client.
+    """Synchronous OmniLLM client.
 
     Example::
 

@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes how the LLM Gateway is put together: the request
+This document describes how the OmniLLM is put together: the request
 pipeline, the provider abstraction, the resilience layer, metrics/observability,
 the data model, and the client SDK. It complements `README.md` (usage) and the
 detailed design notes under `docs/design/`.
@@ -220,7 +220,7 @@ non-secret display prefix; plaintext is returned exactly once at creation.
 
 ## Client SDK
 
-`sdk/` is a standalone, fully-typed package (`llm_gateway`) — sync `Client` and
+`sdk/` is a standalone, fully-typed package (`omnillm`) — sync `Client` and
 async `AsyncClient` with identical constructors and method names. It imports
 nothing from the server and mirrors the wire schema with its own Pydantic
 models. Features: flexible `messages` input, streaming (`chat_stream`, raw text

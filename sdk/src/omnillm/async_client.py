@@ -1,6 +1,6 @@
-"""Asynchronous client for the LLM Gateway.
+"""Asynchronous client for the OmniLLM.
 
-Mirrors :class:`llm_gateway.client.Client` one-to-one: identical constructor and
+Mirrors :class:`omnillm.client.Client` one-to-one: identical constructor and
 method *names*, but every method is ``async def`` and :meth:`chat_stream`
 returns an ``AsyncIterator``. Use ``async with`` / ``await aclose()`` for
 lifecycle management.
@@ -28,13 +28,13 @@ from .models import (
     StreamChunk,
 )
 
-logger = logging.getLogger("llm_gateway")
+logger = logging.getLogger("omnillm")
 
-_USER_AGENT = f"llm-gateway-sdk/{__version__}"
+_USER_AGENT = f"omnillm/{__version__}"
 
 
 class AsyncClient:
-    """Asynchronous LLM Gateway client.
+    """Asynchronous OmniLLM client.
 
     Example::
 

@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "llm-gateway-sdk"
+name = "omnillm"
 version = "0.1.0"
-description = "Python client SDK for the LLM Gateway (sync + async, streaming, typed)."
+description = "Python client SDK for the OmniLLM (sync + async, streaming, typed)."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "LLM Gateway" }]
+authors = [{ name = "OmniLLM" }]
 keywords = ["llm", "gateway", "openai", "anthropic", "client", "sdk"]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -25,13 +25,13 @@ dependencies = [
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 
 [project.urls]
-Homepage = "https://github.com/your-org/llm-gateway"
+Homepage = "https://github.com/your-org/omnillm"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/llm_gateway"]
+packages = ["src/omnillm"]
 
 [tool.hatch.build]
-artifacts = ["src/llm_gateway/py.typed"]
+artifacts = ["src/omnillm/py.typed"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

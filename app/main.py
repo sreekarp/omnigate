@@ -31,13 +31,18 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("LLM Gateway v%s starting up", __version__)
+    logger.info("OmniLLM v%s starting up", __version__)
     yield
     await close_redis()
-    logger.info("LLM Gateway shutting down")
+    logger.info("OmniLLM shutting down")
 
 
-app = FastAPI(title="LLM Gateway", version=__version__, lifespan=lifespan)
+app = FastAPI(
+    title="OmniLLM",
+    version=__version__,
+    summary="One OpenAI-compatible API for OpenAI, Anthropic, Gemini & Azure.",
+    lifespan=lifespan,
+)
 
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
@@ -101,7 +106,7 @@ async def ready() -> JSONResponse:
 
 @app.get("/version", tags=["meta"])
 async def version() -> dict[str, str]:
-    return {"name": "llm-gateway", "version": __version__}
+    return {"name": "omnillm", "version": __version__}
 
 
 @app.get("/metrics", tags=["meta"], include_in_schema=True)
