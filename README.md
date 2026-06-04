@@ -218,6 +218,10 @@ PYTHONPATH=sdk/src pytest sdk/tests -q   # SDK tests
 uvicorn app.main:app --reload        # http://localhost:8000  (/docs for OpenAPI)
 ```
 
+## 🤝 Contributing
+
+Contributions are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, conventions, and how to add a provider. Please run `pytest -q` and `pytest -q sdk/tests` before opening a PR.
+
 ## 📄 License
 
-MIT
+[MIT](LICENSE) (c) Sreekar Paruchuru
