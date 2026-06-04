@@ -1,16 +1,25 @@
-"""omnigate — Python client for the OmniGate.
+"""omnigate — a litellm-style multi-provider LLM SDK.
 
-Sync and async, streaming-aware, fully typed. Talks the gateway's HTTP surface:
-``/v1/chat`` (text/plain streaming), ``/v1/chat/completions`` (OpenAI-compatible),
-``/v1/models``, ``/v1/metrics``, ``/v1/keys`` (BYOK) + ``/v1/keys/api`` (gateway
-key mgmt), ``/v1/signup``, ``/v1/me`` and ``/health``.
+Two ways to use it, both sync + async, streaming-aware, and fully typed:
 
-Quick start::
+1. **In-process (no hosting)** — call OpenAI/Anthropic/Gemini/Azure directly,
+   with routing, retry, fallback, circuit breaking, cost tracking, an opt-in
+   response cache, callbacks and a local spend cap. Keys come from the standard
+   provider env vars (``OPENAI_API_KEY`` etc.) or an explicit ``api_key=``::
 
-    from omnigate import Client
+       import omnigate
 
-    with Client(api_key="llmg_...", base_url="https://gw.example.com") as c:
-        print(c.chat(model="gpt-4o-mini", messages="Hello!").content)
+       r = omnigate.completion(model="gpt-4o-mini", messages="Hello!")
+       print(r.content, r.usage.total_tokens, r.cost_usd)
+
+2. **Hosted gateway client** — point :class:`Client` / :class:`AsyncClient` at a
+   running OmniGate server for centralised auth, budgets, rate limiting and
+   metrics::
+
+       from omnigate import Client
+
+       with Client(api_key="llmg_...", base_url="https://gw.example.com") as c:
+           print(c.chat(model="gpt-4o-mini", messages="Hello!").content)
 """
 
 from __future__ import annotations

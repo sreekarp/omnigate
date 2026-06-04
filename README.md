@@ -84,42 +84,46 @@ The same key now routes to **any** provider you've configured — just change th
 
 ## 🐍 Use the OmniGate Python SDK
 
-A typed client (sync + async, streaming, retries) for talking to your gateway:
-
 ```bash
-pip install omnigate           # the client SDK
+pip install omnigate
 ```
+
+The SDK has **two modes**. The first needs no server at all.
+
+**1. In-process (litellm-style)** — call providers directly, with routing,
+retry, fallbacks, circuit breaking, cost tracking, an opt-in cache, callbacks
+and a local spend cap. Keys come from `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
+`GEMINI_API_KEY` / `AZURE_OPENAI_API_KEY` (or `api_key=`):
+
+```python
+import omnigate
+
+r = omnigate.completion(model="gpt-4o-mini", messages="Hello!",
+                        fallbacks=["claude-3-5-haiku-latest"])
+print(r.content, r.usage.total_tokens, r.cost_usd)
+
+# async + streaming both supported
+async for chunk in await omnigate.acompletion(model="gpt-4o-mini",
+                                               messages="haiku", stream=True):
+    print(chunk.text, end="")
+```
+
+**2. Hosted gateway client** — point a typed client at a running gateway for
+centralised auth, budgets, rate limiting and metrics:
 
 ```python
 from omnigate import Client
 
 with Client(api_key="llmg_...", base_url="http://localhost:8000") as gw:
-    # simple chat
     print(gw.chat(model="gpt-4o-mini", messages="Hello!").content)
-
-    # streaming
-    for piece in gw.chat_stream(model="claude-3-5-sonnet-latest", messages="Write a haiku"):
-        print(piece, end="", flush=True)
-
-    # catalog + usage metrics
-    print(gw.models())
     print(gw.metrics(range="24h"))
 ```
 
-```python
-import asyncio
-from omnigate import AsyncClient
+See [`sdk/README.md`](sdk/README.md) for the full SDK guide.
 
-async def main():
-    async with AsyncClient(api_key="llmg_...", base_url="http://localhost:8000") as gw:
-        r = await gw.chat(model="gemini-1.5-flash", messages="Hi")
-        print(r.content, r.usage, r.cost_usd)
-
-asyncio.run(main())
-```
-
-> **Two packages, one project:** `pip install omnigate` is the **client SDK** (call a running gateway);
-> `pip install omnigate-gateway` installs the **server** + the `omnigate-gateway` CLI.
+> **Two packages, one project:** `pip install omnigate` is the **SDK** (use it
+> in-process, or as a client to a running gateway); `pip install
+> omnigate-gateway` installs the **server** + the `omnigate-gateway` CLI.
 
 ## 🧭 Supported models & routing
 

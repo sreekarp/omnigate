@@ -74,7 +74,12 @@ Chained FastAPI dependencies (NOT Starlette middleware):
 - app/main.py — app wiring, request-id middleware, /health[/live|/ready],
   /version, /metrics (Prometheus)
 - app/cli.py — `omnigate-gateway` CLI (serve, db, config-check, org, project, usage)
-- sdk/ — standalone typed client SDK (Client, AsyncClient); imports nothing from app
+- sdk/ — standalone typed SDK (package name `omnigate`); imports nothing from app.
+  Two modes: (1) an in-process litellm-style engine — `omnigate.completion()` /
+  `acompletion()` calling providers directly (own copies of provider specs,
+  routing, retry, in-memory circuit breaker, TTL cache, pricing, callbacks,
+  spend cap; see sdk/src/omnigate/engine.py); (2) the hosted-gateway HTTP client
+  (Client, AsyncClient).
 
 ## Env vars
 Required: DATABASE_URL, REDIS_URL, SECRET_KEY, ADMIN_API_KEY.

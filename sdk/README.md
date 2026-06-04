@@ -1,16 +1,178 @@
 # omnigate
 
-A small, fully-typed Python client for the **OmniGate** — sync **and** async,
-streaming-aware, with typed errors. Depends only on `httpx` and `pydantic`.
+A small, fully-typed, **litellm-style** multi-provider LLM SDK — sync **and**
+async, streaming-aware, with typed errors. Depends only on `httpx` and
+`pydantic`.
 
 ```
 pip install omnigate
 ```
 
-The SDK is a standalone package: it imports nothing from the gateway server, and
-mirrors the gateway's wire schema with its own Pydantic models.
+Two ways to use it:
 
-## Quick start (sync)
+1. **In-process** — call OpenAI / Anthropic / Gemini / Azure **directly**, no
+   server to run. You get routing, retry + backoff, fallbacks, circuit
+   breaking, per-call cost tracking, an opt-in response cache, callbacks and a
+   local spend cap.
+2. **Hosted gateway client** — point `Client` / `AsyncClient` at a running
+   **OmniGate** server for centralised auth, budgets, rate limiting and metrics.
+
+---
+
+## In-process quick start
+
+Set a provider key the usual way (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`GEMINI_API_KEY` / `GOOGLE_API_KEY`, or `AZURE_OPENAI_API_KEY` +
+`AZURE_OPENAI_ENDPOINT`) — or pass `api_key=` explicitly.
+
+```python
+import omnigate
+
+r = omnigate.completion(model="gpt-4o-mini", messages="Say hi in French")
+print(r.content, r.usage.total_tokens, r.cost_usd, r.model, r.provider)
+```
+
+`messages` is flexible: pass a bare string (treated as one `user` message), a
+single dict/`Message`, or a list of dicts/`Message`s. The model name routes to
+the provider by prefix (`gpt-*`/`o1`/`o3`/`o4` → OpenAI, `claude-*` → Anthropic,
+`gemini-*` → Gemini, `azure/<deployment>` → Azure OpenAI).
+
+### Async
+
+```python
+import asyncio, omnigate
+
+async def main():
+    r = await omnigate.acompletion(
+        model="claude-3-5-haiku-latest",
+        messages=[{"role": "user", "content": "hi"}],
+    )
+    print(r.content)
+
+asyncio.run(main())
+```
+
+### Streaming
+
+`completion(stream=True)` returns an iterator of `StreamChunk`; the async twin
+returns an async iterator. Content chunks carry `text`; the final chunk carries
+`usage`.
+
+```python
+for chunk in omnigate.completion(model="gpt-4o-mini", messages="haiku", stream=True):
+    print(chunk.text, end="", flush=True)
+
+# async
+async for chunk in await omnigate.acompletion(model="gpt-4o-mini",
+                                               messages="haiku", stream=True):
+    print(chunk.text, end="")
+```
+
+### Fallbacks
+
+Try models in order until one succeeds. Each may resolve to a different
+provider; transient failures (429/5xx/timeout) trip the breaker, client errors
+(4xx) just move on. `response.fallback_used` tells you if a fallback answered.
+
+```python
+r = omnigate.completion(
+    model="gpt-4o-mini",
+    messages="hi",
+    fallbacks=["claude-3-5-haiku-latest", "gemini-1.5-flash"],
+)
+```
+
+### Cost tracking
+
+Every non-streamed response carries `cost_usd` computed from a built-in
+per-model price table (`omnigate.pricing`). Cached hits are billed as `0.0`.
+
+### Response cache (opt-in)
+
+A deterministic, in-memory TTL cache for repeated `temperature=0` calls. Enable
+per call with `cache=True`, or globally via `configure(cache_enabled=True)`.
+
+```python
+r1 = omnigate.completion(model="gpt-4o-mini", messages="2+2?", temperature=0, cache=True)
+r2 = omnigate.completion(model="gpt-4o-mini", messages="2+2?", temperature=0, cache=True)
+assert r2.cached and r2.cost_usd == 0.0   # served from cache, no second API call
+```
+
+### Callbacks
+
+Register success/failure hooks to log usage, cost and latency to your own sink.
+
+```python
+omnigate.register_callback(
+    on_success=lambda e: print(e.provider, e.model, e.cost_usd, e.latency_ms),
+    on_failure=lambda e: print("failed:", e.exception),
+)
+```
+
+### Local spend cap
+
+Set a process-wide USD ceiling; once reached, further calls raise
+`BudgetExceededError`.
+
+```python
+omnigate.configure(max_spend_usd=5.00)
+```
+
+### Configuration & keys
+
+`configure(...)` sets process-global defaults and/or keys; per-call kwargs
+(`timeout=`, `num_retries=`, `cache=`, `api_key=`, `api_base=`, `api_version=`)
+override them. Everything also reads from the environment:
+
+| Setting | Env var | Default |
+|---|---|---|
+| Request timeout (s) | `OMNIGATE_TIMEOUT_SECONDS` | 60 |
+| Retry attempts | `OMNIGATE_RETRY_MAX_ATTEMPTS` | 3 |
+| Retry base delay (s) | `OMNIGATE_RETRY_BASE_DELAY_SECONDS` | 0.25 |
+| Retry max delay (s) | `OMNIGATE_RETRY_MAX_DELAY_SECONDS` | 8.0 |
+| Retry jitter (s) | `OMNIGATE_RETRY_JITTER_SECONDS` | 0.25 |
+| Circuit breaker on | `OMNIGATE_CIRCUIT_BREAKER_ENABLED` | true |
+| Breaker fail threshold | `OMNIGATE_CIRCUIT_BREAKER_FAIL_THRESHOLD` | 5 |
+| Breaker cooldown (s) | `OMNIGATE_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | 30 |
+| Cache on | `OMNIGATE_CACHE_ENABLED` | false |
+| Cache TTL (s) | `OMNIGATE_CACHE_TTL_SECONDS` | 300 |
+| Local spend cap (USD) | `OMNIGATE_MAX_SPEND_USD` | (off) |
+
+```python
+import omnigate
+
+omnigate.configure(
+    openai_api_key="sk-...",
+    anthropic_api_key="...",
+    azure_endpoint="https://my.openai.azure.com",
+    cache_enabled=True,
+    num_retries=3,   # note: in configure this is EngineConfig.retry_max_attempts
+)
+
+# Azure: deployment is taken from the model id
+omnigate.completion(model="azure/my-gpt4o-deployment", messages="hi",
+                    api_key="...", api_base="https://my.openai.azure.com")
+```
+
+### Errors (in-process)
+
+All errors derive from `GatewayError`.
+
+| Exception | When |
+|---|---|
+| `AuthError` | provider returned 401/403 (your provider key is bad) |
+| `RateLimitError` | 429 — has `.retry_after` (honored by retry) |
+| `BudgetExceededError` | local spend cap reached |
+| `ProviderError` | 5xx / network / timeout (retried, then surfaced) |
+| `APIError` | config errors (unknown model, missing key) and other 4xx |
+
+---
+
+## Hosted gateway client
+
+If you run an **OmniGate** server, point the client at it for centralised auth,
+budgets, rate limiting and metrics. The client talks the gateway's HTTP surface;
+it does not call providers itself.
 
 ```python
 from omnigate import Client
@@ -20,48 +182,16 @@ with Client(base_url="https://gw.example.com") as anon:
     acct = anon.signup(email="dev@acme.com", org_name="Acme", project_name="prod")
 
 client = Client(api_key=acct.api_key, base_url="https://gw.example.com", user_id="u-42")
+client.set_provider_key(provider="openai", api_key="sk-...")  # stored encrypted by the gateway
 
-# Bring-your-own-key: stored encrypted by the gateway (POST /v1/keys -> 204).
-client.set_provider_key(provider="openai", api_key="sk-...")
-
-resp = client.chat(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "Say hi in French"}],
-)
+resp = client.chat(model="gpt-4o-mini", messages=[{"role": "user", "content": "Hi"}])
 print(resp.content, resp.usage.total_tokens, resp.cost_usd)
 client.close()
 ```
 
-`messages` is flexible: pass a bare string (treated as one `user` message), a
-single dict/`Message`, or a list of dicts/`Message`s.
-
-```python
-client.chat(model="gpt-4o-mini", messages="Just a quick question")
-```
-
-## Streaming
-
-The gateway streams **plain text** (not SSE). The SDK reassembles it for you and
-raises a typed `ProviderError` if the gateway emits a mid-stream failure.
-
-> Streaming responses carry **no usage or cost** — `cost_usd`/`usage` are only
-> populated for non-streaming `chat()` calls (the server records zeros for
-> streamed requests).
-
-```python
-for piece in client.chat_stream(model="gpt-4o-mini", messages="Stream me a haiku"):
-    print(piece, end="", flush=True)
-
-# Want provenance (request_id)? Ask for StreamChunk objects:
-for chunk in client.chat_stream(model="gpt-4o-mini", messages="hi", as_chunks=True):
-    print(chunk.text, chunk.request_id)
-```
-
-## Async
-
-`AsyncClient` mirrors `Client` exactly: **identical constructor and method
-names**, but every method is `async def` and `chat_stream` returns an async
-iterator. Use `async with` / `await client.aclose()`.
+`AsyncClient` mirrors `Client` exactly (identical constructor and method names),
+but every method is `async def` and `chat_stream` returns an async iterator. Use
+`async with` / `await client.aclose()`.
 
 ```python
 import asyncio
@@ -70,12 +200,8 @@ from omnigate import AsyncClient, BudgetExceededError, RateLimitError
 async def main():
     async with AsyncClient(api_key="llmg_...", base_url="https://gw.example.com") as c:
         try:
-            async for chunk in c.chat_stream(
-                model="claude-3-5-sonnet-latest",
-                messages=[{"role": "user", "content": "hi"}],
-                as_chunks=True,
-            ):
-                print(chunk.text, end="")
+            async for piece in c.chat_stream(model="claude-3-5-sonnet-latest", messages="hi"):
+                print(piece, end="")
         except RateLimitError as e:
             print("slow down; retry after", e.retry_after)
         except BudgetExceededError as e:
@@ -84,39 +210,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Errors
-
-All errors derive from `GatewayError`.
-
-| Exception | When |
-|---|---|
-| `AuthError` | 401 — gateway api key missing/invalid |
-| `RateLimitError` | 429 — has `.retry_after` (seconds, parsed from `Retry-After`) |
-| `BudgetExceededError` | 402 — daily/monthly budget exhausted |
-| `ProviderError` | 502 or an upstream provider failure surfaced by the gateway |
-| `APIError` | any other 4xx/5xx; carries `.status_code`, `.detail`, `.request_id` |
-| `ConnectionError` | network/timeout after retries are exhausted |
-
-A provider-surfaced 401 (e.g. a real OpenAI 401) is classified as
-`ProviderError`, not `AuthError`, by inspecting the error detail — so you can
-distinguish "my gateway key is bad" from "my OpenAI key is bad".
-
-## Retries
-
-429 and 5xx responses, plus connection/timeout errors, are retried with
-exponential backoff + jitter (honoring `Retry-After`). Configure via
-`retries=` or a full `RetryConfig`:
-
-```python
-from omnigate import Client, RetryConfig
-
-Client(api_key="llmg_...", retries=3)
-Client(api_key="llmg_...", retry_config=RetryConfig(max_retries=5, backoff_max=20))
-```
-
-Streaming requests are **not** retried once bytes have started flowing.
-
-## Pointing the OpenAI SDK at the gateway
+### Pointing the OpenAI SDK at the gateway
 
 The gateway exposes an OpenAI-compatible `POST /v1/chat/completions`, so you can
 reuse the official OpenAI SDK and just change the base URL + key:
@@ -126,56 +220,28 @@ from openai import OpenAI
 
 oai = OpenAI(
     base_url="https://gw.example.com/v1",
-    api_key="llmg_...",          # your gateway key, sent as the bearer token
+    api_key="llmg_...",
     default_headers={"x-api-key": "llmg_...", "x-user-id": "u-42"},
 )
-oai.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "Hi"}],
-)
+oai.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": "Hi"}])
 ```
 
-This SDK also offers a thin `completions(...)` helper returning the raw
-OpenAI-shaped dict.
-
-## Models & metrics
+### Models, metrics & key management (hosted)
 
 ```python
-# GET /v1/models -> list[ModelInfo] (OpenAI-style cards; pricing may be None)
-for m in client.models():
-    if m.pricing:
-        print(m.id, m.owned_by, m.provider, m.pricing.input_per_1k_usd)
-    else:
-        print(m.id, m.owned_by, "(unpriced)")
+for m in client.models():            # GET /v1/models
+    print(m.id, m.owned_by, m.provider)
 
-# GET /v1/metrics -> MetricsResponse. range is one of 1h | 24h | 7d | 30d
-# (default "24h"). The response carries totals, an optional grouped breakdown,
-# and a bucketed timeseries.
-mx = client.metrics(range="7d")
-print(mx.totals.requests, mx.totals.cost_usd, mx.totals.cache_hit_rate)
-print(mx.totals.p95_latency_ms)
-for row in mx.breakdown:          # grouped by provider/model/user/status
-    print(row.key, row.requests, row.cost_usd)
-for pt in mx.timeseries:          # bucketed points
-    print(pt.bucket, pt.requests)
+mx = client.metrics(range="7d")      # GET /v1/metrics (1h | 24h | 7d | 30d)
+print(mx.totals.requests, mx.totals.cost_usd, mx.totals.p95_latency_ms)
+
+key = client.create_api_key(name="ci")   # POST /v1/keys/api -> ApiKeyCreated (plaintext shown once)
+client.me(); client.health()
 ```
 
-## Gateway key management
-
-`POST /v1/keys/api` mints an additional named gateway key; the plaintext
-`api_key` is returned **once** and never recoverable afterwards.
-
-```python
-key = client.create_api_key(name="ci")   # POST /v1/keys/api -> ApiKeyCreated
-print(key.api_key, key.key_prefix, key.id)  # persist key.api_key now
-```
-
-## Other methods
-
-```python
-client.me()      # GET /v1/me  -> MeResponse
-client.health()  # GET /health -> dict
-```
+Gateway-client errors map the same exception hierarchy; a provider-surfaced 401
+is classified as `ProviderError` (not `AuthError`) so you can tell "my gateway
+key is bad" from "my OpenAI key is bad".
 
 ## License
 

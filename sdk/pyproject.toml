@@ -4,13 +4,16 @@ build-backend = "hatchling.build"
 
 [project]
 name = "omnigate"
-version = "0.1.0"
-description = "Python client SDK for the OmniGate (sync + async, streaming, typed)."
+version = "0.2.0"
+description = "OmniGate — a litellm-style multi-provider LLM SDK: call OpenAI, Anthropic, Gemini & Azure in-process with routing, retry, fallback, circuit breaking, cost tracking and an opt-in cache — or point it at a hosted OmniGate gateway."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "OmniGate" }]
-keywords = ["llm", "gateway", "openai", "anthropic", "client", "sdk"]
+keywords = [
+    "llm", "gateway", "openai", "anthropic", "gemini", "azure",
+    "litellm", "proxy", "completion", "client", "sdk",
+]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Typing :: Typed",
@@ -25,7 +28,8 @@ dependencies = [
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 
 [project.urls]
-Homepage = "https://github.com/your-org/omnigate"
+Homepage = "https://github.com/sreekarp/omnigate"
+Documentation = "https://github.com/sreekarp/omnigate#readme"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/omnigate"]
