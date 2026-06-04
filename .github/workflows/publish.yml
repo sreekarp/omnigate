@@ -1,0 +1,49 @@
+name: Publish to PyPI
+
+# Publishes the OmniGate client SDK (distribution name: `omnigate`) to PyPI using
+# PyPI Trusted Publishing (OpenID Connect) — no API token is stored in the repo.
+#
+# ONE-TIME SETUP (on pypi.org, before the first publish):
+#   1. Create a free PyPI account (with 2FA).
+#   2. Go to https://pypi.org/manage/account/publishing/ and add a
+#      "pending publisher":
+#        - PyPI Project Name:  omnigate
+#        - Owner:              sreekarp
+#        - Repository name:    omnigate
+#        - Workflow name:      publish.yml
+#        - Environment name:   pypi
+#   3. Create a GitHub release (or run this workflow manually). The job below
+#      builds the SDK and uploads it — PyPI trusts the OIDC token from this repo.
+#
+# After the project exists on PyPI, the same pending-publisher entry keeps working
+# for every subsequent release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  pypi-publish:
+    name: Build & publish omnigate (SDK)
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # REQUIRED for Trusted Publishing (OIDC)
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the SDK
+        run: |
+          python -m pip install --upgrade build
+          python -m build ./sdk --outdir dist
+
+      - name: Publish to PyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
