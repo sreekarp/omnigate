@@ -44,7 +44,7 @@ keep your code unchanged — OmniLLM handles routing, keys, spend limits, retrie
 ## 🚀 Quick start (run the gateway)
 
 ```bash
-git clone https://github.com/OWNER/omnillm.git
+git clone https://github.com/sreekarp/omnillm.git
 cd omnillm
 cp .env.example .env            # set SECRET_KEY + ADMIN_API_KEY (generate: python -c "import secrets;print(secrets.token_urlsafe(48))")
 docker compose up --build       # runs migrations, then serves on :8000
