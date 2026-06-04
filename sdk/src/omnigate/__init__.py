@@ -18,7 +18,10 @@ from __future__ import annotations
 from ._retry import RetryConfig
 from ._version import __version__
 from .async_client import AsyncClient
+from .callbacks import CallbackEvent
 from .client import Client
+from .config import EngineConfig
+from .engine import acompletion, completion, configure, register_callback
 from .exceptions import (
     APIError,
     AuthError,
@@ -48,7 +51,14 @@ from .models import (
 
 __all__ = [
     "__version__",
-    # clients
+    # in-process engine (litellm-style)
+    "completion",
+    "acompletion",
+    "configure",
+    "register_callback",
+    "EngineConfig",
+    "CallbackEvent",
+    # hosted-gateway clients
     "Client",
     "AsyncClient",
     "RetryConfig",

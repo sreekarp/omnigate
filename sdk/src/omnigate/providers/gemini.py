@@ -43,7 +43,7 @@ class GeminiSpec(ProviderSpec):
         model_id = quote(_normalise_model(request.model), safe="")
         return f"{_BASE_URL}/models/{model_id}:generateContent"
 
-    def stream_url(self, request: ChatRequest) -> str:
+    def stream_url(self, request: ChatRequest, target: Optional[Target] = None) -> str:
         """Streaming URL variant (``streamGenerateContent`` + SSE)."""
         model_id = quote(_normalise_model(request.model), safe="")
         return f"{_BASE_URL}/models/{model_id}:streamGenerateContent?alt=sse"

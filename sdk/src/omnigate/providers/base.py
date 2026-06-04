@@ -41,6 +41,10 @@ class ProviderSpec(ABC):
     def url(self, request: ChatRequest, target: Optional[Target]) -> str:
         """The request URL (Azure uses ``target`` for endpoint/deployment/version)."""
 
+    def stream_url(self, request: ChatRequest, target: Optional[Target]) -> str:
+        """Streaming URL; defaults to :meth:`url` (Gemini overrides it)."""
+        return self.url(request, target)
+
     @abstractmethod
     def headers(self, api_key: str) -> dict[str, str]:
         """Auth + content-type headers for the call."""

@@ -321,3 +321,258 @@ def test_gemini_spec_parse():
     }
     resp = s.parse_response(data, "gemini-1.5-flash")
     assert resp.content == "ok" and resp.usage.total_tokens == 5
+
+
+# ---------------------------------------------------------------------------
+# Task 11 — engine orchestration (offline via MockTransport)
+# ---------------------------------------------------------------------------
+
+OPENAI_OK = {
+    "id": "c1", "model": "gpt-4o-mini",
+    "choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}],
+    "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+}
+ANTHROPIC_OK = {
+    "id": "a1", "model": "claude-3-5-haiku-latest",
+    "content": [{"type": "text", "text": "fallback!"}],
+    "usage": {"input_tokens": 1, "output_tokens": 1}, "stop_reason": "end_turn",
+}
+
+
+@pytest.fixture(autouse=True)
+def _fresh(monkeypatch):
+    from omnigate import keys as _keys, callbacks as _cb, engine as _engine
+    from omnigate.cache import get_cache
+    from omnigate.config import EngineConfig, set_config
+
+    _keys.reset()
+    _cb.reset()
+    _engine.reset_state()
+    get_cache().clear()
+    set_config(EngineConfig(
+        retry_base_delay=0.0, retry_max_delay=0.0, retry_jitter=0.0,
+        circuit_breaker_cooldown=0.01,
+    ))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ak-test")
+    yield
+    _keys.reset()
+    _cb.reset()
+    _engine.reset_state()
+    get_cache().clear()
+    set_config(EngineConfig())
+
+
+def _transport(handler):
+    return httpx.MockTransport(handler)
+
+
+def test_completion_happy_path_sync():
+    import omnigate
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.headers["authorization"] == "Bearer sk-test"
+        return httpx.Response(200, json=OPENAI_OK)
+
+    r = omnigate.completion(model="gpt-4o-mini", messages="hi", transport=_transport(handler))
+    assert r.content == "hello" and r.usage.total_tokens == 5
+    assert r.provider == "openai" and r.cost_usd > 0 and r.latency_ms >= 0
+
+
+async def test_acompletion_happy_path():
+    import omnigate
+
+    def handler(req):
+        return httpx.Response(200, json=OPENAI_OK)
+
+    r = await omnigate.acompletion(model="gpt-4o-mini", messages="hi", transport=_transport(handler))
+    assert r.content == "hello"
+
+
+def test_completion_retries_then_succeeds():
+    import omnigate
+
+    n = {"i": 0}
+
+    def handler(req):
+        n["i"] += 1
+        if n["i"] < 2:
+            return httpx.Response(503, json={"error": "busy"})
+        return httpx.Response(200, json=OPENAI_OK)
+
+    r = omnigate.completion(model="gpt-4o-mini", messages="hi", transport=_transport(handler))
+    assert r.content == "hello" and n["i"] == 2
+
+
+def test_completion_fallback_used():
+    import omnigate
+
+    def handler(req):
+        if "anthropic.com" in str(req.url):
+            return httpx.Response(200, json=ANTHROPIC_OK)
+        return httpx.Response(500, json={"error": "down"})
+
+    r = omnigate.completion(
+        model="gpt-4o-mini", messages="hi",
+        fallbacks=["claude-3-5-haiku-latest"], transport=_transport(handler),
+    )
+    assert r.content == "fallback!" and r.fallback_used is True and r.provider == "anthropic"
+
+
+def test_completion_auth_error_not_retried():
+    import omnigate
+    from omnigate import AuthError
+
+    n = {"i": 0}
+
+    def handler(req):
+        n["i"] += 1
+        return httpx.Response(401, json={"error": "bad key"})
+
+    with pytest.raises(AuthError):
+        omnigate.completion(model="gpt-4o-mini", messages="hi", transport=_transport(handler))
+    assert n["i"] == 1
+
+
+def test_completion_cache_hit():
+    import omnigate
+
+    n = {"i": 0}
+
+    def handler(req):
+        n["i"] += 1
+        return httpx.Response(200, json=OPENAI_OK)
+
+    kw = dict(model="gpt-4o-mini", messages="hi", temperature=0, cache=True,
+              transport=_transport(handler))
+    omnigate.completion(**kw)
+    b = omnigate.completion(**kw)
+    assert n["i"] == 1 and b.cached is True and b.cost_usd == 0.0
+
+
+def test_breaker_opens_after_threshold():
+    import omnigate
+    from omnigate import ProviderError
+    from omnigate.config import EngineConfig, set_config
+
+    set_config(EngineConfig(
+        retry_base_delay=0.0, retry_max_delay=0.0, retry_jitter=0.0,
+        retry_max_attempts=1, circuit_breaker_fail_threshold=2,
+        circuit_breaker_cooldown=999.0,
+    ))
+    n = {"i": 0}
+
+    def handler(req):
+        n["i"] += 1
+        return httpx.Response(500, json={"error": "down"})
+
+    for _ in range(2):
+        with pytest.raises(ProviderError):
+            omnigate.completion(model="gpt-4o-mini", messages="hi", transport=_transport(handler))
+    calls_before = n["i"]
+    # breaker now OPEN: next call is short-circuited (no new HTTP attempt)
+    with pytest.raises(ProviderError):
+        omnigate.completion(model="gpt-4o-mini", messages="hi", transport=_transport(handler))
+    assert n["i"] == calls_before
+
+
+def test_spend_cap_raises():
+    import omnigate
+    from omnigate import BudgetExceededError
+    from omnigate.config import EngineConfig, set_config
+
+    set_config(EngineConfig(max_spend_usd=0.0))
+
+    def handler(req):
+        return httpx.Response(200, json=OPENAI_OK)
+
+    with pytest.raises(BudgetExceededError):
+        omnigate.completion(model="gpt-4o-mini", messages="hi", transport=_transport(handler))
+
+
+def test_callbacks_fire_on_success():
+    import omnigate
+
+    events = []
+    omnigate.register_callback(on_success=lambda e: events.append(e))
+
+    def handler(req):
+        return httpx.Response(200, json=OPENAI_OK)
+
+    omnigate.completion(model="gpt-4o-mini", messages="hi", transport=_transport(handler))
+    assert events and events[0].provider == "openai" and events[0].cost_usd > 0
+
+
+def test_missing_key_raises_api_error(monkeypatch):
+    import omnigate
+    from omnigate.exceptions import APIError
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(APIError):
+        omnigate.completion(model="gpt-4o-mini", messages="hi",
+                            transport=_transport(lambda r: httpx.Response(200, json=OPENAI_OK)))
+
+
+def test_streaming_sync_reassembles_and_usage():
+    import omnigate
+
+    sse = (
+        "data: " + json.dumps({"choices": [{"delta": {"content": "Hel"}}]}) + "\n\n"
+        "data: " + json.dumps({"choices": [{"delta": {"content": "lo"}}]}) + "\n\n"
+        "data: " + json.dumps({"choices": [], "model": "gpt-4o-mini",
+                               "usage": {"prompt_tokens": 1, "completion_tokens": 2,
+                                         "total_tokens": 3}}) + "\n\n"
+        "data: [DONE]\n\n"
+    )
+
+    def handler(req):
+        return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+
+    chunks = list(omnigate.completion(model="gpt-4o-mini", messages="hi", stream=True,
+                                      transport=_transport(handler)))
+    assert "".join(c.text for c in chunks) == "Hello"
+    assert any(c.usage and c.usage.total_tokens == 3 for c in chunks)
+
+
+async def test_streaming_async_reassembles():
+    import omnigate
+
+    sse = (
+        "data: " + json.dumps({"choices": [{"delta": {"content": "AB"}}]}) + "\n\n"
+        "data: " + json.dumps({"choices": [{"delta": {"content": "C"}}]}) + "\n\n"
+        "data: [DONE]\n\n"
+    )
+
+    def handler(req):
+        return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+
+    out = []
+    async for chunk in await omnigate.acompletion(model="gpt-4o-mini", messages="hi",
+                                                   stream=True, transport=_transport(handler)):
+        out.append(chunk.text)
+    assert "".join(out) == "ABC"
+
+
+def test_configure_keys_and_config():
+    import omnigate
+    from omnigate import keys
+    from omnigate.config import get_config
+
+    omnigate.configure(openai_api_key="sk-configured", cache_enabled=True, max_spend_usd=9.0)
+    assert keys.resolve_key("openai", None) == "sk-configured"
+    cfg = get_config()
+    assert cfg.cache_enabled is True and cfg.max_spend_usd == 9.0
+    with pytest.raises(ValueError):
+        omnigate.configure(nonsense=1)
+
+
+# ---------------------------------------------------------------------------
+# Task 12 — public exports + version
+# ---------------------------------------------------------------------------
+
+def test_top_level_exports():
+    import omnigate
+
+    for name in ("completion", "acompletion", "configure", "register_callback", "EngineConfig"):
+        assert hasattr(omnigate, name)
+    assert omnigate.__version__ == "0.2.0"
