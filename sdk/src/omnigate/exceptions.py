@@ -26,12 +26,17 @@ class APIError(GatewayError):
         status_code: Optional[int] = None,
         detail: Any = None,
         request_id: Optional[str] = None,
+        retry_after: Optional[float] = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.detail = detail  # raw parsed "detail": str | list | None
         self.request_id = request_id
+        # Seconds to wait before retrying (parsed from a Retry-After header).
+        # Only meaningful for transient errors; the in-process retry layer
+        # reads it uniformly across error types.
+        self.retry_after = retry_after
 
     def __str__(self) -> str:  # pragma: no cover - cosmetic
         if self.status_code is not None:
