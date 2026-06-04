@@ -1,6 +1,6 @@
-# OmniLLM
+# OmniGate
 
-A production-grade OmniLLM that sits between applications and LLM
+A production-grade OmniGate that sits between applications and LLM
 providers (OpenAI, Anthropic, Google Gemini, Azure OpenAI). Adds auth, rate
 limiting, daily + monthly budget controls, per-org/project/user cost tracking,
 resilience (retry, circuit breaker, fallback, response cache), a metrics API,
@@ -14,7 +14,7 @@ dashboard.
   the optional Redis circuit-breaker backend
 - Alembic for schema migrations
 - Docker Compose for local dev
-- Packaged with pyproject.toml; ships an `omnillm-gateway` console script
+- Packaged with pyproject.toml; ships an `omnigate-gateway` console script
 
 ## Hierarchy
 Organisation → Projects → Users
@@ -73,7 +73,7 @@ Chained FastAPI dependencies (NOT Starlette middleware):
 - app/routers/admin.py — /v1/admin/* provisioning + org metrics (x-admin-key)
 - app/main.py — app wiring, request-id middleware, /health[/live|/ready],
   /version, /metrics (Prometheus)
-- app/cli.py — `omnillm-gateway` CLI (serve, db, config-check, org, project, usage)
+- app/cli.py — `omnigate-gateway` CLI (serve, db, config-check, org, project, usage)
 - sdk/ — standalone typed client SDK (Client, AsyncClient); imports nothing from app
 
 ## Env vars

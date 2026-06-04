@@ -1,4 +1,4 @@
-"""Tests for the OmniLLM SDK using httpx.MockTransport (no network).
+"""Tests for the OmniGate SDK using httpx.MockTransport (no network).
 
 Run with: pytest sdk/tests -q  (after `pip install -e sdk[dev]`).
 """
@@ -10,7 +10,7 @@ import json
 import httpx
 import pytest
 
-from omnillm import (
+from omnigate import (
     APIError,
     AsyncClient,
     AuthError,
@@ -21,11 +21,11 @@ from omnillm import (
     RateLimitError,
     StreamChunk,
 )
-from omnillm import _retry as retry_mod
-from omnillm._retry import RetryConfig, compute_delay, parse_retry_after, should_retry
-from omnillm._transport import iter_text_chunks
-from omnillm.exceptions import classify, normalise_detail
-from omnillm.models import coerce_messages
+from omnigate import _retry as retry_mod
+from omnigate._retry import RetryConfig, compute_delay, parse_retry_after, should_retry
+from omnigate._transport import iter_text_chunks
+from omnigate.exceptions import classify, normalise_detail
+from omnigate.models import coerce_messages
 
 
 BASE = "http://gw.test"
@@ -80,7 +80,7 @@ def test_coerce_messages_variants():
 
 
 def test_chatrequest_validation_rejects_bad_input():
-    from omnillm.models import ChatRequest, Message
+    from omnigate.models import ChatRequest, Message
     import pydantic
 
     with pytest.raises(pydantic.ValidationError):
@@ -185,7 +185,7 @@ def test_classify_and_normalise_detail_units():
 
 def test_retry_then_success(monkeypatch):
     calls = {"n": 0, "sleeps": []}
-    monkeypatch.setattr("omnillm.client.time.sleep", lambda s: calls["sleeps"].append(s))
+    monkeypatch.setattr("omnigate.client.time.sleep", lambda s: calls["sleeps"].append(s))
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls["n"] += 1
@@ -201,12 +201,12 @@ def test_retry_then_success(monkeypatch):
 
 
 def test_transport_error_becomes_connection_error(monkeypatch):
-    monkeypatch.setattr("omnillm.client.time.sleep", lambda s: None)
+    monkeypatch.setattr("omnigate.client.time.sleep", lambda s: None)
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)
 
-    from omnillm import ConnectionError as GWConn
+    from omnigate import ConnectionError as GWConn
 
     with make_client(handler, retries=1) as c:
         with pytest.raises(GWConn):

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the OmniLLM are documented here. This project follows
+All notable changes to the OmniGate are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
 ## [0.2.0] - 2026-06-04
@@ -60,10 +60,10 @@ to work unchanged.
 - **Client SDK** (`sdk/`) — standalone, fully-typed `Client` + `AsyncClient`,
   streaming-aware, typed errors, built-in retry; depends only on httpx +
   pydantic. `pip install ./sdk`.
-- **CLI** — `omnillm-gateway` console script (`app/cli.py`): `serve`, `db
+- **CLI** — `omnigate-gateway` console script (`app/cli.py`): `serve`, `db
   upgrade/downgrade`, `config-check`, `version`, `org`, `project`, `usage`.
 - **Packaging** — `pyproject.toml` (hatchling) for the server with the
-  `omnillm-gateway` entry point; separate SDK distribution.
+  `omnigate-gateway` entry point; separate SDK distribution.
 - New resilience/cache/logging configuration env vars (`RETRY_*`,
   `CIRCUIT_BREAKER_*`, `RESPONSE_CACHE_*`, `LOG_FORMAT`) — all optional with
   sensible defaults; documented in `.env.example` and passed through in
@@ -82,7 +82,7 @@ to work unchanged.
 
 - `0003_multikey_monthly_meta` — adds `provider_credentials.meta`, the `api_keys`
   table, and `monthly_budget` on `organisations` and `projects`. Run
-  `alembic upgrade head` (or `omnillm-gateway db upgrade`).
+  `alembic upgrade head` (or `omnigate-gateway db upgrade`).
 
 ## [0.1.0]
 

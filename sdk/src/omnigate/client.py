@@ -1,23 +1,22 @@
-"""Asynchronous client for the OmniLLM.
+"""Synchronous client for the OmniGate.
 
-Mirrors :class:`omnillm.client.Client` one-to-one: identical constructor and
-method *names*, but every method is ``async def`` and :meth:`chat_stream`
-returns an ``AsyncIterator``. Use ``async with`` / ``await aclose()`` for
-lifecycle management.
+Wraps an ``httpx.Client``, sends the ``x-api-key`` gateway key, retries 429/5xx
+and transport errors with hand-rolled exponential backoff, and raises the SDK's
+typed exceptions. Streaming uses the gateway's plain-text protocol (not SSE).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import Any, AsyncIterator, Optional, Union
+import time
+from typing import Any, Iterator, Optional, Union
 
 import httpx
 
 from . import _transport as T
 from ._retry import RetryConfig, compute_delay, parse_retry_after, should_retry
 from ._version import __version__
-from .exceptions import ConnectionError as GatewayConnectionError, ProviderError
+from .exceptions import ConnectionError as GatewayConnectionError
 from .models import (
     ApiKeyCreated,
     ChatResponse,
@@ -28,20 +27,22 @@ from .models import (
     StreamChunk,
 )
 
-logger = logging.getLogger("omnillm")
+logger = logging.getLogger("omnigate")
 
-_USER_AGENT = f"omnillm/{__version__}"
+_USER_AGENT = f"omnigate/{__version__}"
 
 
-class AsyncClient:
-    """Asynchronous OmniLLM client.
+class Client:
+    """Synchronous OmniGate client.
 
     Example::
 
-        async with AsyncClient(api_key="llmg_...") as c:
-            resp = await c.chat(model="gpt-4o-mini", messages="Hello!")
-            async for piece in c.chat_stream(model="gpt-4o-mini", messages="hi"):
-                print(piece, end="")
+        with Client(api_key="llmg_...", base_url="https://gw.example.com") as c:
+            resp = c.chat(model="gpt-4o-mini", messages="Hello!")
+            print(resp.content)
+
+    ``api_key`` is optional so the public :meth:`signup` endpoint works on a
+    keyless client.
     """
 
     def __init__(
@@ -54,7 +55,7 @@ class AsyncClient:
         retries: int = 2,
         retry_config: Optional[RetryConfig] = None,
         headers: Optional[dict[str, str]] = None,
-        transport: Optional[httpx.AsyncBaseTransport] = None,
+        transport: Optional[httpx.BaseTransport] = None,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -62,22 +63,22 @@ class AsyncClient:
         self._retry = retry_config or RetryConfig(max_retries=retries)
         self._extra_headers = dict(headers or {})
         self._extra_headers.setdefault("user-agent", _USER_AGENT)
-        self._client = httpx.AsyncClient(
+        self._client = httpx.Client(
             timeout=timeout,
             transport=transport,
         )
 
     # --- lifecycle --------------------------------------------------------
 
-    async def aclose(self) -> None:
+    def close(self) -> None:
         """Close the underlying HTTP connection pool."""
-        await self._client.aclose()
+        self._client.close()
 
-    async def __aenter__(self) -> "AsyncClient":
+    def __enter__(self) -> "Client":
         return self
 
-    async def __aexit__(self, *exc: object) -> None:
-        await self.aclose()
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     # --- low-level request with retry ------------------------------------
 
@@ -86,28 +87,30 @@ class AsyncClient:
             self.api_key, user_id or self.user_id, self._extra_headers
         )
 
-    async def _request(
+    def _request(
         self,
         method: str,
         path: str,
         *,
         json: Any = None,
-        params: Any = None,
         user_id: Optional[str] = None,
     ) -> httpx.Response:
+        """Issue a non-streaming request with retry/backoff; return the response."""
         url = T.build_url(self.base_url, path)
         headers = self._headers(user_id)
         attempt = 0
+        last_exc: Optional[Exception] = None
         while True:
             try:
-                response = await self._client.request(
-                    method, url, json=json, params=params, headers=headers
+                response = self._client.request(
+                    method, url, json=json, headers=headers
                 )
             except (httpx.TransportError, httpx.TimeoutException) as exc:
+                last_exc = exc
                 if should_retry(None, attempt, self._retry):
                     delay = compute_delay(attempt, self._retry, None)
                     logger.debug("transport error, retrying in %.2fs: %s", delay, exc)
-                    await asyncio.sleep(delay)
+                    time.sleep(delay)
                     attempt += 1
                     continue
                 raise GatewayConnectionError(
@@ -122,15 +125,18 @@ class AsyncClient:
                 logger.debug(
                     "status %s, retrying in %.2fs", response.status_code, delay
                 )
-                await response.aclose()
-                await asyncio.sleep(delay)
+                response.close()
+                time.sleep(delay)
                 attempt += 1
                 continue
             return response
 
+        # unreachable, but keeps type checkers happy
+        raise GatewayConnectionError(str(last_exc))  # pragma: no cover
+
     # --- chat -------------------------------------------------------------
 
-    async def chat(
+    def chat(
         self,
         *,
         model: str,
@@ -147,7 +153,7 @@ class AsyncClient:
             temperature=temperature,
             stream=False,
         )
-        resp = await self._request("POST", "/v1/chat", json=body, user_id=user_id)
+        resp = self._request("POST", "/v1/chat", json=body, user_id=user_id)
         data = T.handle_json_response(resp)
         return ChatResponse.model_validate(data)
 
@@ -160,12 +166,13 @@ class AsyncClient:
         temperature: Optional[float] = None,
         user_id: Optional[str] = None,
         as_chunks: bool = False,
-    ) -> Union[AsyncIterator[str], AsyncIterator[StreamChunk]]:
-        """Stream a chat completion as an async iterator.
+    ) -> Union[Iterator[str], Iterator[StreamChunk]]:
+        """Stream a chat completion (``POST /v1/chat`` with ``stream=true``).
 
-        Yields ``str`` by default, or :class:`StreamChunk` when
-        ``as_chunks=True``. Raises :class:`ProviderError` on the gateway's
-        mid-stream error sentinel.
+        Yields ``str`` text fragments by default, or :class:`StreamChunk`
+        (carrying ``request_id``) when ``as_chunks=True``. Raises
+        :class:`ProviderError` if the gateway emits its mid-stream error
+        sentinel. Streaming requests are not retried once bytes are flowing.
         """
         if as_chunks:
             return self._stream_chunks(
@@ -183,7 +190,7 @@ class AsyncClient:
             user_id=user_id,
         )
 
-    async def _stream_chunks(
+    def _stream_chunks(
         self,
         *,
         model: str,
@@ -191,7 +198,7 @@ class AsyncClient:
         max_tokens: Optional[int],
         temperature: Optional[float],
         user_id: Optional[str],
-    ) -> AsyncIterator[StreamChunk]:
+    ) -> Iterator[StreamChunk]:
         body = T.prepare_chat_body(
             model=model,
             messages=messages,
@@ -202,23 +209,22 @@ class AsyncClient:
         url = T.build_url(self.base_url, "/v1/chat")
         headers = self._headers(user_id)
         try:
-            async with self._client.stream(
+            with self._client.stream(
                 "POST", url, json=body, headers=headers
             ) as response:
                 if response.status_code >= 400:
-                    await response.aread()
+                    response.read()
                     raise T.error_for_response(response)
                 request_id = T.request_id_of(response)
-                async for chunk in _aiter_text_chunks(
-                    response.aiter_text(), request_id
-                ):
-                    yield chunk
+                yield from T.iter_text_chunks(
+                    response.iter_text(), request_id
+                )
         except (httpx.TransportError, httpx.TimeoutException) as exc:
             raise GatewayConnectionError(
                 f"Could not reach gateway at {self.base_url}: {exc}"
             ) from exc
 
-    async def _stream_text(
+    def _stream_text(
         self,
         *,
         model: str,
@@ -226,8 +232,8 @@ class AsyncClient:
         max_tokens: Optional[int],
         temperature: Optional[float],
         user_id: Optional[str],
-    ) -> AsyncIterator[str]:
-        async for chunk in self._stream_chunks(
+    ) -> Iterator[str]:
+        for chunk in self._stream_chunks(
             model=model,
             messages=messages,
             max_tokens=max_tokens,
@@ -237,7 +243,7 @@ class AsyncClient:
             if chunk.text:
                 yield chunk.text
 
-    async def completions(
+    def completions(
         self,
         *,
         model: str,
@@ -246,7 +252,11 @@ class AsyncClient:
         temperature: Optional[float] = None,
         user_id: Optional[str] = None,
     ) -> dict[str, Any]:
-        """OpenAI-compatible completion (``POST /v1/chat/completions``)."""
+        """OpenAI-compatible completion (``POST /v1/chat/completions``).
+
+        Returns the raw OpenAI-shaped JSON dict so it can be consumed exactly
+        like the OpenAI SDK's response. Requires gateway task #6 to be live.
+        """
         body = T.prepare_chat_body(
             model=model,
             messages=messages,
@@ -254,33 +264,42 @@ class AsyncClient:
             temperature=temperature,
             stream=False,
         )
-        resp = await self._request(
+        resp = self._request(
             "POST", "/v1/chat/completions", json=body, user_id=user_id
         )
         return T.handle_json_response(resp)
 
     # --- catalog / metrics ------------------------------------------------
 
-    async def models(self) -> list[ModelInfo]:
+    def models(self) -> list[ModelInfo]:
         """List available models (``GET /v1/models``; requires gateway task #6)."""
-        resp = await self._request("GET", "/v1/models")
+        resp = self._request("GET", "/v1/models")
         data = T.handle_json_response(resp)
         items = data.get("data", data) if isinstance(data, dict) else data
         return [ModelInfo.model_validate(m) for m in (items or [])]
 
-    async def metrics(self, *, range: str = "24h") -> MetricsResponse:
+    def metrics(self, *, range: str = "24h") -> MetricsResponse:
         """Fetch project usage metrics (``GET /v1/metrics``).
 
-        ``range`` is one of ``1h|24h|7d|30d`` (default ``24h``). Returns the rich
-        :class:`MetricsResponse` (``totals`` / ``breakdown`` / ``timeseries``).
+        ``range`` is one of ``1h|24h|7d|30d`` (default ``24h``); the gateway also
+        accepts explicit ``from``/``to`` ISO timestamps, but the SDK helper
+        exposes the ``range`` shorthand. Returns the rich :class:`MetricsResponse`
+        (``totals`` / ``breakdown`` / ``timeseries``).
         """
-        resp = await self._request("GET", "/v1/metrics", params={"range": range})
+        url = T.build_url(self.base_url, "/v1/metrics")
+        headers = self._headers(None)
+        try:
+            resp = self._client.get(url, params={"range": range}, headers=headers)
+        except (httpx.TransportError, httpx.TimeoutException) as exc:
+            raise GatewayConnectionError(
+                f"Could not reach gateway at {self.base_url}: {exc}"
+            ) from exc
         data = T.handle_json_response(resp)
         return MetricsResponse.model_validate(data)
 
     # --- account / onboarding --------------------------------------------
 
-    async def signup(
+    def signup(
         self,
         *,
         email: str,
@@ -291,71 +310,36 @@ class AsyncClient:
         body: dict[str, Any] = {"email": email, "project_name": project_name}
         if org_name is not None:
             body["org_name"] = org_name
-        resp = await self._request("POST", "/v1/signup", json=body)
+        resp = self._request("POST", "/v1/signup", json=body)
         data = T.handle_json_response(resp)
         return SignupResponse.model_validate(data)
 
-    async def set_provider_key(self, *, provider: str, api_key: str) -> None:
+    def set_provider_key(self, *, provider: str, api_key: str) -> None:
         """Store/replace your BYOK provider key (``POST /v1/keys`` -> 204)."""
         body = {"provider": provider, "api_key": api_key}
-        resp = await self._request("POST", "/v1/keys", json=body)
+        resp = self._request("POST", "/v1/keys", json=body)
+        # 204 No Content: validate status, never parse a body.
         if resp.status_code >= 400:
             raise T.error_for_response(resp)
 
-    async def create_api_key(self, *, name: str) -> ApiKeyCreated:
+    def create_api_key(self, *, name: str) -> ApiKeyCreated:
         """Mint an additional gateway api key (``POST /v1/keys/api`` -> 201).
 
         Returns an :class:`ApiKeyCreated` carrying the one-time plaintext
-        ``api_key``; persist it immediately as it is never recoverable.
+        ``api_key`` (plus ``id``/``key_prefix``/timestamps); the plaintext is
+        never recoverable afterwards, so persist it immediately.
         """
-        resp = await self._request("POST", "/v1/keys/api", json={"name": name})
+        resp = self._request("POST", "/v1/keys/api", json={"name": name})
         data = T.handle_json_response(resp)
         return ApiKeyCreated.model_validate(data)
 
-    async def me(self) -> MeResponse:
+    def me(self) -> MeResponse:
         """Account info for the current key (``GET /v1/me``)."""
-        resp = await self._request("GET", "/v1/me")
+        resp = self._request("GET", "/v1/me")
         data = T.handle_json_response(resp)
         return MeResponse.model_validate(data)
 
-    async def health(self) -> dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         """Gateway liveness (``GET /health``)."""
-        resp = await self._request("GET", "/health")
+        resp = self._request("GET", "/health")
         return T.handle_json_response(resp)
-
-
-async def _aiter_text_chunks(
-    raw_aiter: AsyncIterator[str], request_id: Optional[str]
-) -> AsyncIterator[StreamChunk]:
-    """Async twin of ``_transport.iter_text_chunks`` (same sentinel handling)."""
-    pending = ""
-    max_hold = len(T.ERROR_SENTINEL) - 1
-
-    async for piece in raw_aiter:
-        if not piece:
-            continue
-        buf = pending + piece
-        idx = buf.find(T.ERROR_SENTINEL)
-        if idx != -1:
-            head = buf[:idx]
-            if head:
-                yield StreamChunk(text=head, request_id=request_id)
-            message = buf[idx + len(T.ERROR_SENTINEL):]
-            async for tail in raw_aiter:
-                message += tail
-            raise ProviderError(
-                message.strip() or "streaming provider error",
-                status_code=502,
-                detail=message.strip(),
-                request_id=request_id,
-            )
-        if len(buf) > max_hold:
-            flush = buf[:-max_hold] if max_hold else buf
-            pending = buf[-max_hold:] if max_hold else ""
-            if flush:
-                yield StreamChunk(text=flush, request_id=request_id)
-        else:
-            pending = buf
-
-    if pending:
-        yield StreamChunk(text=pending, request_id=request_id)

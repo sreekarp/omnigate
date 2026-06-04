@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛰️ OmniLLM
+# 🛰️ OmniGate
 
 ### One OpenAI-compatible API for every LLM provider.
 
@@ -17,11 +17,11 @@ cost tracking, and a live metrics API.
 
 ---
 
-OmniLLM sits between your applications and LLM providers. Point your existing **OpenAI SDK** at it and
-keep your code unchanged — OmniLLM handles routing, keys, spend limits, retries, and observability.
+OmniGate sits between your applications and LLM providers. Point your existing **OpenAI SDK** at it and
+keep your code unchanged — OmniGate handles routing, keys, spend limits, retries, and observability.
 
 ```
-            ┌───────────────────────────── OmniLLM ─────────────────────────────┐
+            ┌───────────────────────────── OmniGate ─────────────────────────────┐
  your app   │  auth → rate limit → budget → cache → breaker → retry → fallback   │   OpenAI
   (OpenAI ──┼──►  /v1/chat/completions  ·  /v1/chat  ·  /v1/metrics  ·  /metrics  ┼──► Anthropic
    SDK)     │                  cost tracking · BYOK vault · dashboard             │   Gemini · Azure
@@ -44,8 +44,8 @@ keep your code unchanged — OmniLLM handles routing, keys, spend limits, retrie
 ## 🚀 Quick start (run the gateway)
 
 ```bash
-git clone https://github.com/sreekarp/omnillm.git
-cd omnillm
+git clone https://github.com/sreekarp/omnigate.git
+cd omnigate
 cp .env.example .env            # set SECRET_KEY + ADMIN_API_KEY (generate: python -c "import secrets;print(secrets.token_urlsafe(48))")
 docker compose up --build       # runs migrations, then serves on :8000
 ```
@@ -70,7 +70,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:8000/v1",
-    api_key="llmg_...",          # your OmniLLM gateway key
+    api_key="llmg_...",          # your OmniGate gateway key
 )
 
 resp = client.chat.completions.create(
@@ -82,16 +82,16 @@ print(resp.choices[0].message.content)
 
 The same key now routes to **any** provider you've configured — just change the `model`.
 
-## 🐍 Use the OmniLLM Python SDK
+## 🐍 Use the OmniGate Python SDK
 
 A typed client (sync + async, streaming, retries) for talking to your gateway:
 
 ```bash
-pip install omnillm           # the client SDK
+pip install omnigate           # the client SDK
 ```
 
 ```python
-from omnillm import Client
+from omnigate import Client
 
 with Client(api_key="llmg_...", base_url="http://localhost:8000") as gw:
     # simple chat
@@ -108,7 +108,7 @@ with Client(api_key="llmg_...", base_url="http://localhost:8000") as gw:
 
 ```python
 import asyncio
-from omnillm import AsyncClient
+from omnigate import AsyncClient
 
 async def main():
     async with AsyncClient(api_key="llmg_...", base_url="http://localhost:8000") as gw:
@@ -118,8 +118,8 @@ async def main():
 asyncio.run(main())
 ```
 
-> **Two packages, one project:** `pip install omnillm` is the **client SDK** (call a running gateway);
-> `pip install omnillm-gateway` installs the **server** + the `omnillm-gateway` CLI.
+> **Two packages, one project:** `pip install omnigate` is the **client SDK** (call a running gateway);
+> `pip install omnigate-gateway` installs the **server** + the `omnigate-gateway` CLI.
 
 ## 🧭 Supported models & routing
 
@@ -174,14 +174,14 @@ curl -s "localhost:8000/v1/metrics?range=24h&group_by=model" -H 'x-api-key: llmg
 ## 🛠️ Management CLI
 
 ```bash
-pip install omnillm-gateway          # installs the `omnillm-gateway` command + server
+pip install omnigate-gateway          # installs the `omnigate-gateway` command + server
 
-omnillm-gateway serve                # run the API (uvicorn)
-omnillm-gateway db upgrade           # apply migrations
-omnillm-gateway org create --name Acme --daily-budget 100 --monthly-budget 2000
-omnillm-gateway project create --org-id <ID> --name Backend --rate-limit 120   # prints the api key once
-omnillm-gateway usage --org-id <ID> --range 7d
-omnillm-gateway config-check
+omnigate-gateway serve                # run the API (uvicorn)
+omnigate-gateway db upgrade           # apply migrations
+omnigate-gateway org create --name Acme --daily-budget 100 --monthly-budget 2000
+omnigate-gateway project create --org-id <ID> --name Backend --rate-limit 120   # prints the api key once
+omnigate-gateway usage --org-id <ID> --range 7d
+omnigate-gateway config-check
 ```
 
 ## ⚙️ Configuration
@@ -203,7 +203,7 @@ app/
   middleware/    auth · rate_limit · budget (FastAPI dependencies)
   routers/       chat · openai_compat · metrics · keys · account · admin · dashboard
   observability/ Prometheus metrics
-sdk/             omnillm — the installable Python client (sync + async)
+sdk/             omnigate — the installable Python client (sync + async)
 ```
 
 ## 🧪 Development

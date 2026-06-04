@@ -1,4 +1,4 @@
-"""omnillm — Python client for the OmniLLM.
+"""omnigate — Python client for the OmniGate.
 
 Sync and async, streaming-aware, fully typed. Talks the gateway's HTTP surface:
 ``/v1/chat`` (text/plain streaming), ``/v1/chat/completions`` (OpenAI-compatible),
@@ -7,7 +7,7 @@ key mgmt), ``/v1/signup``, ``/v1/me`` and ``/health``.
 
 Quick start::
 
-    from omnillm import Client
+    from omnigate import Client
 
     with Client(api_key="llmg_...", base_url="https://gw.example.com") as c:
         print(c.chat(model="gpt-4o-mini", messages="Hello!").content)

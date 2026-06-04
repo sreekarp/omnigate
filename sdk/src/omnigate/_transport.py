@@ -16,7 +16,7 @@ from .exceptions import APIError, classify
 from .models import ChatRequest, Message, StreamChunk, coerce_messages
 from ._retry import parse_retry_after
 
-logger = logging.getLogger("omnillm")
+logger = logging.getLogger("omnigate")
 
 #: The literal sentinel the gateway appends to a stream on mid-stream failure.
 ERROR_SENTINEL = "\n[error] "

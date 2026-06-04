@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "omnillm"
+name = "omnigate"
 version = "0.1.0"
-description = "Python client SDK for the OmniLLM (sync + async, streaming, typed)."
+description = "Python client SDK for the OmniGate (sync + async, streaming, typed)."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "OmniLLM" }]
+authors = [{ name = "OmniGate" }]
 keywords = ["llm", "gateway", "openai", "anthropic", "client", "sdk"]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -25,13 +25,13 @@ dependencies = [
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 
 [project.urls]
-Homepage = "https://github.com/your-org/omnillm"
+Homepage = "https://github.com/your-org/omnigate"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/omnillm"]
+packages = ["src/omnigate"]
 
 [tool.hatch.build]
-artifacts = ["src/omnillm/py.typed"]
+artifacts = ["src/omnigate/py.typed"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

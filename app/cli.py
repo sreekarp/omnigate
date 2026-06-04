@@ -1,17 +1,17 @@
-"""``omnillm-gateway`` management CLI (stdlib argparse, no extra deps).
+"""``omnigate-gateway`` management CLI (stdlib argparse, no extra deps).
 
 Subcommands::
 
-    omnillm-gateway serve [--host H] [--port P] [--reload]
-    omnillm-gateway db upgrade|downgrade [--rev REV]
-    omnillm-gateway config-check
-    omnillm-gateway version
-    omnillm-gateway org create --name N [--daily-budget D] [--monthly-budget M]
-    omnillm-gateway org list
-    omnillm-gateway project create --org-id ID --name N [--daily-budget D] \\
+    omnigate-gateway serve [--host H] [--port P] [--reload]
+    omnigate-gateway db upgrade|downgrade [--rev REV]
+    omnigate-gateway config-check
+    omnigate-gateway version
+    omnigate-gateway org create --name N [--daily-budget D] [--monthly-budget M]
+    omnigate-gateway org list
+    omnigate-gateway project create --org-id ID --name N [--daily-budget D] \\
                                [--monthly-budget M] [--rate-limit N]
-    omnillm-gateway project list [--org-id ID]
-    omnillm-gateway usage (--org-id ID | --project-id ID) [--range 24h]
+    omnigate-gateway project list [--org-id ID]
+    omnigate-gateway usage (--org-id ID | --project-id ID) [--range 24h]
 
 DB-touching commands talk to the database directly (like the seed script).
 """
@@ -52,7 +52,7 @@ def _cmd_db(args: argparse.Namespace) -> int:
 def _cmd_version(_: argparse.Namespace) -> int:
     from app import __version__
 
-    _print(f"omnillm-gateway {__version__}")
+    _print(f"omnigate-gateway {__version__}")
     return 0
 
 
@@ -196,7 +196,7 @@ def _cmd_usage(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="omnillm-gateway", description="OmniLLM management CLI")
+    p = argparse.ArgumentParser(prog="omnigate-gateway", description="OmniGate management CLI")
     sub = p.add_subparsers(dest="command", required=True)
 
     s = sub.add_parser("serve", help="Run the API server (uvicorn)")

@@ -1,4 +1,4 @@
-"""Pydantic v2 models mirroring the OmniLLM wire schema.
+"""Pydantic v2 models mirroring the OmniGate wire schema.
 
 These mirror ``app/schemas/chat.py`` and ``app/schemas/account.py`` on the
 server side but import nothing from the server package, so the SDK is fully
